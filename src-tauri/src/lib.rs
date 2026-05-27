@@ -10,12 +10,13 @@ mod rules;
 mod scoring;
 
 use commands::{
-    clear_all_transcripts, export_conversation_markdown, get_conversation_export_markdown,
-    get_conversation_messages, get_dashboard, get_default_cursor_path, get_import_status,
-    get_project_top_conversations, get_scores, get_settings, get_top_conversations, get_trend_data,
-    import_all, import_all_and_score, import_claude_code, import_claude_markdown, import_cursor,
-    list_conversations, list_projects, refresh_analytics, save_settings, scan_project_rules,
-    score_conversation, score_pending, score_project, score_project_rules,
+    analyze_chat_vibe, clear_all_transcripts, export_conversation_markdown,
+    get_conversation_export_markdown, get_conversation_messages, get_dashboard,
+    get_default_cursor_path, get_import_status, get_project_top_conversations, get_scores,
+    get_settings, get_top_conversations, get_trend_data, import_all, import_all_and_score,
+    import_claude_code, import_claude_markdown, import_cursor, list_conversations, list_projects,
+    refresh_analytics, save_settings, scan_project_rules, score_conversation, score_pending,
+    score_project, score_project_rules,
 };
 use db::Database;
 use tauri::Manager;
@@ -62,7 +63,8 @@ pub fn run() {
             refresh_analytics,
             get_trend_data,
             scan_project_rules,
-            score_project_rules
+            score_project_rules,
+            analyze_chat_vibe
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

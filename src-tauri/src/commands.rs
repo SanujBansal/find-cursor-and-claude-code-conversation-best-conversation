@@ -2117,6 +2117,144 @@ fn read_project_rules_score(
     })
 }
 
+// ── Improve the Vibe command ──────────────────────────────────────────────────
+
+/// One prompt improvement: the original bad prompt and the concrete rewrite.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VibeImprovement {
+    pub index: u8,
+    pub bad_prompt: String,
+    pub improved_prompt: String,
+    pub tip: String,
+}
+
+/// Analyse up to the first 20 user prompts from a single conversation and
+/// return up to 10 concrete "bad → improved" prompt examples.
+#[tauri::command]
+pub async fn analyze_chat_vibe(
+    db: tauri::State<'_, Database>,
+    conversation_id: i64,
+    api_key: String,
+    model_id: Option<String>,
+) -> Result<Vec<VibeImprovement>, String> {
+    let config = resolve_llm_config(&db, &api_key, model_id)?;
+
+    // Load user messages synchronously.
+    let user_messages: Vec<String> = db.with_connection(|conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT content FROM messages
+                 WHERE conversation_id = ?1 AND role = 'user'
+                 ORDER BY sequence_num ASC",
+            )
+            .map_err(|e| e.to_string())?;
+
+        stmt.query_map([conversation_id], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
+    })?;
+
+    if user_messages.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Compile up to 20 prompts, each capped at 600 chars, into the context block.
+    let prompts_text: String = user_messages
+        .iter()
+        .take(20)
+        .enumerate()
+        .map(|(i, m)| {
+            let excerpt = if m.chars().count() > 600 {
+                format!("{}…", &m[..m.char_indices().nth(600).map(|(b, _)| b).unwrap_or(m.len())])
+            } else {
+                m.clone()
+            };
+            format!("[Prompt {}]: {}", i + 1, excerpt)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let system_prompt =
+        "You are a vibe-coding coach who helps developers write better AI prompts. \
+         Analyse the user's prompts from a real coding session. \
+         Identify up to 10 specific problems — vagueness, missing context, no expected output, \
+         imperative tone, multi-tasking in one shot, etc. \
+         For each problem quote the actual bad prompt (or a short excerpt), \
+         then write a concrete improved version that is specific, scoped, \
+         and includes expected output. \
+         Return ONLY valid JSON — no markdown fences, no commentary.";
+
+    let user_content = format!(
+        "User prompts from the coding session:\n\n{prompts_text}\n\n\
+         Respond ONLY with valid JSON matching this schema:\n\
+         {{\"improvements\": [\
+           {{\"bad_prompt\": \"<exact or shortened quote>\", \
+             \"improved_prompt\": \"<concrete rewrite>\", \
+             \"tip\": \"<one-line reason why this version is better>\"}}\
+         ]}}\n\
+         Return up to 10 items. Only flag genuine issues you actually observed."
+    );
+
+    let raw_content = llm::chat_completion(
+        &config,
+        vec![
+            crate::azure::ChatMessage {
+                role: "system",
+                content: system_prompt.to_string(),
+            },
+            crate::azure::ChatMessage {
+                role: "user",
+                content: user_content,
+            },
+        ],
+        None,
+    )
+    .await?;
+
+    let json_str = extract_first_json_object(&raw_content);
+
+    #[derive(serde::Deserialize)]
+    struct RawPayload {
+        improvements: Vec<RawImprovement>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RawImprovement {
+        bad_prompt: String,
+        improved_prompt: String,
+        tip: String,
+    }
+
+    let payload: RawPayload = serde_json::from_str(&json_str).map_err(|e| {
+        format!(
+            "Failed to parse vibe analysis JSON: {e}\nRaw response: {raw_content}"
+        )
+    })?;
+
+    Ok(payload
+        .improvements
+        .into_iter()
+        .take(10)
+        .enumerate()
+        .map(|(i, r)| VibeImprovement {
+            index: (i + 1) as u8,
+            bad_prompt: r.bad_prompt,
+            improved_prompt: r.improved_prompt,
+            tip: r.tip,
+        })
+        .collect())
+}
+
+fn extract_first_json_object(text: &str) -> String {
+    if let Some(start) = text.find('{') {
+        if let Some(end) = text.rfind('}') {
+            return text[start..=end].to_string();
+        }
+    }
+    text.to_string()
+}
+
 // ── shared helpers ────────────────────────────────────────────────────────────
 
 fn display_project_name(

@@ -322,6 +322,15 @@ export interface ProjectRulesView {
   stale: boolean;
 }
 
+// ── Improve the Vibe ─────────────────────────────────────────────────────────
+
+export interface VibeImprovement {
+  index: number;
+  badPrompt: string;
+  improvedPrompt: string;
+  tip: string;
+}
+
 export const RULE_KIND_LABELS: Record<RuleKind, string> = {
   agents: "AGENTS.md",
   claude: "Claude rules",

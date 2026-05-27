@@ -15,6 +15,7 @@ import type {
   ScoreRecord,
   ScoringResult,
   TrendPoint,
+  VibeImprovement,
 } from "./types";
 
 export async function getDashboard(): Promise<DashboardData> {
@@ -196,6 +197,18 @@ export async function scoreProjectRules(
   return invoke<ProjectRulesScore>("score_project_rules", {
     apiKey,
     projectPath,
+    modelId: modelId ?? null,
+  });
+}
+
+export async function analyzeChatVibe(
+  conversationId: number,
+  apiKey: string,
+  modelId?: string,
+): Promise<VibeImprovement[]> {
+  return invoke<VibeImprovement[]>("analyze_chat_vibe", {
+    conversationId,
+    apiKey,
     modelId: modelId ?? null,
   });
 }
