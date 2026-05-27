@@ -2130,7 +2130,7 @@ pub struct VibeImprovement {
 }
 
 /// Analyse up to the first 20 user prompts from a single conversation and
-/// return up to 10 concrete "bad → improved" prompt examples.
+/// return the 3–5 highest-impact "bad → improved" prompt rewrites.
 #[tauri::command]
 pub async fn analyze_chat_vibe(
     db: tauri::State<'_, Database>,
@@ -2179,13 +2179,13 @@ pub async fn analyze_chat_vibe(
         .join("\n\n");
 
     let system_prompt =
-        "You are a vibe-coding coach who helps developers write better AI prompts. \
-         Analyse the user's prompts from a real coding session. \
-         Identify up to 10 specific problems — vagueness, missing context, no expected output, \
-         imperative tone, multi-tasking in one shot, etc. \
-         For each problem quote the actual bad prompt (or a short excerpt), \
-         then write a concrete improved version that is specific, scoped, \
-         and includes expected output. \
+        "You are a senior AI prompt coach. Analyse the user's prompts from a real coding session \
+         and identify the 3 to 5 highest-impact improvements only — skip anything minor or stylistic. \
+         Focus on problems that meaningfully hurt the AI's ability to help: vague intent, \
+         missing context, no expected output, trying to do too many things at once, or lack of constraints. \
+         For each issue quote the exact bad prompt (or a short excerpt), then write a tight, \
+         concrete improved version that is specific, single-purpose, and includes the expected output or acceptance criteria. \
+         Be ruthlessly selective — if a prompt is already good, do not include it. \
          Return ONLY valid JSON — no markdown fences, no commentary.";
 
     let user_content = format!(
@@ -2196,7 +2196,8 @@ pub async fn analyze_chat_vibe(
              \"improved_prompt\": \"<concrete rewrite>\", \
              \"tip\": \"<one-line reason why this version is better>\"}}\
          ]}}\n\
-         Return up to 10 items. Only flag genuine issues you actually observed."
+         Return 3 to 5 items maximum — only the highest-impact improvements. \
+         If fewer than 3 genuine issues exist, return only those. Never pad with minor fixes."
     );
 
     let raw_content = llm::chat_completion(
@@ -2237,7 +2238,7 @@ pub async fn analyze_chat_vibe(
     Ok(payload
         .improvements
         .into_iter()
-        .take(10)
+        .take(5)
         .enumerate()
         .map(|(i, r)| VibeImprovement {
             index: (i + 1) as u8,
