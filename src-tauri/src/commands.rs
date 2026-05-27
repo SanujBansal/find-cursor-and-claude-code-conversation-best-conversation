@@ -2154,8 +2154,8 @@ pub async fn analyze_chat_vibe(
             .query_map([conversation_id], |row| row.get::<_, String>(0))
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        Ok(rows)
+            .map_err(|e| e.to_string());
+        rows
     })?;
 
     if user_messages.is_empty() {
