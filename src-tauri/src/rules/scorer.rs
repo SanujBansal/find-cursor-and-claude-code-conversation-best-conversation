@@ -1,7 +1,10 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::azure::{chat_completion, AzureOpenAIConfig, ChatMessage};
+use crate::{
+    azure::ChatMessage,
+    llm::{self, LlmConfig},
+};
 
 use super::scanner::{ProjectRulesReport, RuleFile};
 
@@ -48,8 +51,8 @@ struct RawScore {
 /// message if there are no rule files (nothing to grade).
 pub async fn score_project_rules_with_llm(
     report: &ProjectRulesReport,
-    config: &AzureOpenAIConfig,
-    deployment: &str,
+    config: &LlmConfig,
+    model: &str,
 ) -> Result<ProjectRulesScore, String> {
     if report.rule_files.is_empty() {
         return Err(
@@ -91,9 +94,8 @@ pub async fn score_project_rules_with_llm(
         }
     });
 
-    let content = chat_completion(
+    let content = llm::chat_completion(
         config,
-        deployment,
         vec![ChatMessage {
             role: "user",
             content: prompt,
@@ -133,7 +135,7 @@ pub async fn score_project_rules_with_llm(
         overall_score: overall,
         summary: raw.summary,
         suggestions: raw.suggestions,
-        model_id: deployment.to_string(),
+        model_id: model.to_string(),
         rubric_version: PROJECT_RULES_RUBRIC_VERSION.to_string(),
         scored_at: Utc::now().to_rfc3339(),
     })

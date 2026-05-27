@@ -1,12 +1,13 @@
 use chrono::Utc;
 
 use crate::{
-    azure::{chat_completion, ChatMessage, AzureOpenAIConfig},
+    llm::{self, LlmConfig},
     scoring::{
         prompt,
         rubric::{self, RubricDimensions, RUBRIC_VERSION},
     },
 };
+use crate::azure::ChatMessage;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,15 +56,15 @@ struct ScorePayload {
 /// call once before returning an error for that transcript.
 pub async fn score_batch(
     conversations: &[ConversationForScoring],
-    config: &AzureOpenAIConfig,
-    deployment: &str,
+    config: &LlmConfig,
+    model: &str,
 ) -> Result<Vec<ScoringResult>, String> {
     let mut results = Vec::new();
 
     for conv in conversations {
-        match score_one(conv, config, deployment).await {
+        match score_one(conv, config, model).await {
             Ok(result) => results.push(result),
-            Err(first_err) => match score_one(conv, config, deployment).await {
+            Err(first_err) => match score_one(conv, config, model).await {
                 Ok(result) => results.push(result),
                 Err(retry_err) => {
                     return Err(format!(
@@ -80,15 +81,15 @@ pub async fn score_batch(
 
 async fn score_one(
     conv: &ConversationForScoring,
-    config: &AzureOpenAIConfig,
-    deployment: &str,
+    config: &LlmConfig,
+    model: &str,
 ) -> Result<ScoringResult, String> {
     let prompt_out = prompt::build_prompt(
         &prompt::PromptInput {
             content_hash: conv.content_hash.clone(),
             messages: conv.messages.clone(),
         },
-        deployment,
+        model,
     );
 
     let json_schema = serde_json::json!({
@@ -121,9 +122,8 @@ async fn score_one(
         }
     });
 
-    let content = chat_completion(
+    let content = llm::chat_completion(
         config,
-        deployment,
         vec![ChatMessage {
             role: "user",
             content: prompt_out.prompt,
@@ -169,7 +169,7 @@ async fn score_one(
         dimensions,
         final_score,
         explanation: payload.explanation,
-        model_id: deployment.to_string(),
+        model_id: model.to_string(),
         rubric_version: RUBRIC_VERSION.to_string(),
         prompt_version: prompt::PROMPT_VERSION.to_string(),
         cache_key: prompt_out.cache_key,

@@ -71,7 +71,7 @@ impl AzureOpenAIConfig {
     }
 }
 
-fn load_env_file() -> Result<(), String> {
+pub fn load_env_file() -> Result<(), String> {
     for path in env_file_candidates() {
         if path.exists() {
             dotenvy::from_path(&path).map_err(|error| {
@@ -140,7 +140,7 @@ fn required_env(keys: &[&str]) -> Result<String, String> {
     })
 }
 
-fn optional_env(keys: &[&str]) -> Option<String> {
+pub fn optional_env(keys: &[&str]) -> Option<String> {
     keys.iter()
         .find_map(|key| std::env::var(key).ok())
         .map(|value| value.trim().trim_matches('"').trim_matches('\'').to_string())

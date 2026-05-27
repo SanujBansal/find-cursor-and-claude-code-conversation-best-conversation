@@ -13,8 +13,6 @@ import { useTauriRuntime } from "../../src/lib/useTauriRuntime";
 import type { AppSettings, ImportAllResult, JobStatusRecord } from "../../src/lib/types";
 import { DEFAULT_SETTINGS } from "../../src/lib/types";
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-
 function StatusBadge({ status }: { status: string }) {
   const colours: Record<string, string> = {
     pending: "text-muted",
@@ -261,11 +259,47 @@ export default function SettingsPage() {
       subtitle="Provider keys, transcript paths, and scoring configuration."
     >
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* ── Provider ── */}
+        {/* ── OpenAI ── */}
+        <section className="rounded border border-panel-border bg-panel p-5 flex flex-col gap-4">
+          <SectionHeading>OpenAI</SectionHeading>
+          <p className="text-xs text-muted">
+            When an OpenAI API key is set, it takes priority over Azure for scoring
+            and other AI tasks. You can also set{" "}
+            <code className="text-foreground">OPENAI_API_KEY</code> in{" "}
+            <code className="text-foreground">{settings.azureEnvPath || ".env"}</code>.
+          </p>
+          {settings.openAiConfigured ? (
+            <p className="text-xs text-[#4ade80]">
+              OpenAI configured — used for scoring and AI tasks
+            </p>
+          ) : (
+            <p className="text-xs text-muted">
+              No OpenAI key configured. Azure will be used if available.
+            </p>
+          )}
+          <FieldRow label="API Key">
+            <input
+              type="password"
+              value={settings.openAiApiKey}
+              onChange={(e) => update("openAiApiKey", e.target.value)}
+              placeholder="Leave blank to use OPENAI_API_KEY from .env"
+              className="w-full rounded border border-panel-border bg-panel px-3 py-1.5 text-sm text-foreground placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+          </FieldRow>
+          <FieldRow label="Model / Deployment">
+            <TextInput
+              value={settings.scoringModel}
+              onChange={(v) => update("scoringModel", v)}
+              placeholder="gpt-4.1-mini"
+            />
+          </FieldRow>
+        </section>
+
+        {/* ── Azure OpenAI ── */}
         <section className="rounded border border-panel-border bg-panel p-5 flex flex-col gap-4">
           <SectionHeading>Azure OpenAI</SectionHeading>
           <p className="text-xs text-muted">
-            Credentials load from{" "}
+            Used when no OpenAI key is configured. Credentials load from{" "}
             <code className="text-foreground">{settings.azureEnvPath || ".env"}</code>
             . Fields below override the endpoint, API key, and deployment names.
           </p>
@@ -291,17 +325,10 @@ export default function SettingsPage() {
           <FieldRow label="API Key">
             <input
               type="password"
-              value={settings.openaiApiKey}
-              onChange={(e) => update("openaiApiKey", e.target.value)}
+              value={settings.azureApiKey}
+              onChange={(e) => update("azureApiKey", e.target.value)}
               placeholder="Leave blank to use AZURE_OPENAI_API_KEY from .env"
               className="w-full rounded border border-panel-border bg-panel px-3 py-1.5 text-sm text-foreground placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-accent"
-            />
-          </FieldRow>
-          <FieldRow label="Chat Deployment">
-            <TextInput
-              value={settings.scoringModel}
-              onChange={(v) => update("scoringModel", v)}
-              placeholder="gpt-4.1-mini"
             />
           </FieldRow>
         </section>

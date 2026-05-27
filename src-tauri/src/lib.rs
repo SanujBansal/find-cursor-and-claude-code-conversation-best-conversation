@@ -1,6 +1,8 @@
 mod analytics;
 mod azure;
 mod commands;
+mod llm;
+mod openai;
 mod db;
 mod exporters;
 mod importers;

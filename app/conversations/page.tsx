@@ -16,7 +16,7 @@ import type {
   ConversationWithScore,
   ProjectGroup,
 } from "../../src/lib/types";
-import { hasAiCredentials } from "../../src/lib/types";
+import { hasAiCredentials, getActiveApiKey } from "../../src/lib/types";
 
 function sourceLabel(provider: string): string {
   const map: Record<string, string> = {
@@ -427,11 +427,11 @@ export default function ConversationsPage() {
     try {
       const settings = await getSettings();
       if (!hasAiCredentials(settings)) {
-        setError("Configure Azure OpenAI credentials in Settings first.");
+        setError("Configure OpenAI or Azure credentials in Settings first.");
         return;
       }
       await scoreProject(
-        settings.openaiApiKey,
+        getActiveApiKey(settings),
         selectedProject,
         settings.scoringModel,
         requireMinUserMsgs ? minUserMessages : null,

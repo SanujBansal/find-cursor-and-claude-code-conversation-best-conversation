@@ -17,7 +17,7 @@ import type {
   RuleKind,
   TechStack,
 } from "../../src/lib/types";
-import { hasAiCredentials, RULE_KIND_LABELS } from "../../src/lib/types";
+import { hasAiCredentials, getActiveApiKey, RULE_KIND_LABELS } from "../../src/lib/types";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -376,11 +376,11 @@ export default function ProjectRulesPage() {
     try {
       const settings = await getSettings();
       if (!hasAiCredentials(settings)) {
-        setError("Configure Azure OpenAI credentials in Settings first.");
+        setError("Configure OpenAI or Azure credentials in Settings first.");
         return;
       }
       const fresh = await scoreProjectRules(
-        settings.openaiApiKey,
+        getActiveApiKey(settings),
         selectedProject,
         settings.scoringModel,
       );

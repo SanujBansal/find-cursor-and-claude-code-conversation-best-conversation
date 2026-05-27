@@ -12,7 +12,7 @@ import {
 } from "../../../src/lib/tauri";
 import { useTauriRuntime } from "../../../src/lib/useTauriRuntime";
 import type { MessageRecord, ScoreRecord } from "../../../src/lib/types";
-import { hasAiCredentials } from "../../../src/lib/types";
+import { hasAiCredentials, getActiveApiKey } from "../../../src/lib/types";
 
 const DIMENSION_LABELS: Record<string, string> = {
   conceptualKnowledge: "Conceptual Knowledge",
@@ -266,11 +266,11 @@ export function ConversationDetail() {
     try {
       const settings = await getSettings();
       if (!hasAiCredentials(settings)) {
-        setError("Azure AI is not configured — set credentials in `.env` or Settings");
+        setError("AI is not configured — set OpenAI or Azure credentials in Settings");
         return;
       }
       await scoreConversation(
-        settings.openaiApiKey,
+        getActiveApiKey(settings),
         conversationId,
         settings.scoringModel,
       );

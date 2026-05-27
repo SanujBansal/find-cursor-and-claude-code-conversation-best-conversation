@@ -1,11 +1,12 @@
 use crate::{
     analytics::aggregates::{compute_weekly_score, effort_weight, weighted_average},
-    azure::{normalize_endpoint, AzureOpenAIConfig, DEFAULT_API_VERSION, DEFAULT_CHAT_DEPLOYMENT},
+    azure::AzureOpenAIConfig,
     db::Database,
     importers::{
         self,
         types::{ImportResult, JobStatus},
     },
+    llm::{self, ai_provider, LlmConfig, LlmSettings},
     rules::{
         scan_project_rules as scanner_scan, score_project_rules_with_llm, ProjectRulesReport,
         ProjectRulesScore, PROJECT_RULES_RUBRIC_VERSION,
@@ -29,13 +30,21 @@ pub struct AppSettings {
     #[serde(default)]
     pub azure_endpoint: String,
     /// Azure OpenAI API key override (falls back to `.env`).
-    pub openai_api_key: String,
+    #[serde(default, alias = "openaiApiKey")]
+    pub azure_api_key: String,
+    /// Direct OpenAI API key override (falls back to OPENAI_API_KEY from `.env`).
+    #[serde(default)]
+    pub open_ai_api_key: String,
     pub scoring_model: String,
     pub cursor_data_path: String,
     pub claude_code_path: String,
     pub claude_markdown_path: String,
     #[serde(default)]
     pub azure_configured: bool,
+    #[serde(default)]
+    pub open_ai_configured: bool,
+    #[serde(default)]
+    pub ai_provider: String,
     #[serde(default)]
     pub azure_env_path: String,
 }
@@ -44,12 +53,15 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             azure_endpoint: String::new(),
-            openai_api_key: String::new(),
+            azure_api_key: String::new(),
+            open_ai_api_key: String::new(),
             scoring_model: "gpt-4.1-mini".to_string(),
             cursor_data_path: String::new(),
             claude_code_path: String::new(),
             claude_markdown_path: String::new(),
             azure_configured: false,
+            open_ai_configured: false,
+            ai_provider: String::new(),
             azure_env_path: String::new(),
         }
     }
@@ -405,6 +417,7 @@ fn enrich_settings_from_azure(mut settings: AppSettings) -> AppSettings {
     settings.azure_env_path = ".env".to_string();
 
     let env_config = AzureOpenAIConfig::load().ok();
+    let llm_settings = llm_settings_from_app(&settings);
 
     if settings.azure_endpoint.trim().is_empty() {
         if let Some(ref config) = env_config {
@@ -418,61 +431,29 @@ fn enrich_settings_from_azure(mut settings: AppSettings) -> AppSettings {
         }
     }
 
-    settings.azure_configured = azure_credentials_available(&settings, env_config.as_ref());
+    settings.azure_configured =
+        llm::azure_credentials_available(&llm_settings, env_config.as_ref());
+    settings.open_ai_configured = llm::openai_credentials_available(&llm_settings);
+    settings.ai_provider = ai_provider(&llm_settings).to_string();
     settings
 }
 
-fn azure_credentials_available(
-    settings: &AppSettings,
-    env_config: Option<&AzureOpenAIConfig>,
-) -> bool {
-    let settings_endpoint = settings.azure_endpoint.trim();
-    let settings_key = settings.openai_api_key.trim();
-
-    if !settings_endpoint.is_empty() && !settings_key.is_empty() {
-        return true;
+fn llm_settings_from_app(settings: &AppSettings) -> LlmSettings {
+    LlmSettings {
+        azure_endpoint: settings.azure_endpoint.clone(),
+        azure_api_key: settings.azure_api_key.clone(),
+        open_ai_api_key: settings.open_ai_api_key.clone(),
+        scoring_model: settings.scoring_model.clone(),
     }
-
-    env_config.is_some() || AzureOpenAIConfig::is_configured()
 }
 
-fn resolve_azure_config(
+fn resolve_llm_config(
     db: &Database,
     api_key_override: &str,
-    chat_deployment: Option<String>,
-) -> Result<AzureOpenAIConfig, String> {
+    model_override: Option<String>,
+) -> Result<LlmConfig, String> {
     let settings = read_settings(db)?;
-    let mut config = AzureOpenAIConfig::load().unwrap_or_else(|_| AzureOpenAIConfig {
-        endpoint: String::new(),
-        api_key: String::new(),
-        api_version: DEFAULT_API_VERSION.to_string(),
-        chat_deployment: DEFAULT_CHAT_DEPLOYMENT.to_string(),
-    });
-
-    if !settings.azure_endpoint.trim().is_empty() {
-        config.endpoint = normalize_endpoint(&settings.azure_endpoint);
-    }
-
-    let api_key = if !api_key_override.trim().is_empty() {
-        api_key_override.trim().to_string()
-    } else if !settings.openai_api_key.trim().is_empty() {
-        settings.openai_api_key.trim().to_string()
-    } else {
-        config.api_key
-    };
-    config.api_key = api_key;
-
-    let env_chat_deployment = config.chat_deployment.clone();
-    config.chat_deployment = chat_deployment
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            let from_settings = settings.scoring_model.trim();
-            (!from_settings.is_empty()).then(|| from_settings.to_string())
-        })
-        .unwrap_or(env_chat_deployment);
-
-    config.validate()?;
-    Ok(config)
+    llm::resolve_llm_config(&llm_settings_from_app(&settings), api_key_override, model_override)
 }
 
 /// Returns bottom-3 WeakRubric entries averaged over the last 30 days (for dashboard).
@@ -1035,15 +1016,15 @@ pub async fn import_all_and_score(
 
     let (cleared, cursor, claude_code, claude_markdown) = import_results;
 
-    let config = resolve_azure_config(&db, &api_key, scoring_model)?;
-    let deployment = config.chat_deployment.clone();
+    let config = resolve_llm_config(&db, &api_key, scoring_model)?;
+    let model = config.model();
     let pending = fetch_conversations_for_scoring(&db, None, None, None)?;
 
     let mut scored = 0usize;
     let mut scoring_errors = Vec::new();
 
     if !pending.is_empty() {
-        match score_and_persist(&db, &pending, &config, &deployment).await {
+        match score_and_persist(&db, &pending, &config, &model).await {
             Ok(results) => scored = results.len(),
             Err(e) => scoring_errors.push(e),
         }
@@ -1346,8 +1327,8 @@ pub async fn score_project(
     model_id: Option<String>,
     min_user_messages: Option<i64>,
 ) -> Result<Vec<ScoringResult>, String> {
-    let config = resolve_azure_config(&db, &api_key, model_id)?;
-    let deployment = config.chat_deployment.clone();
+    let config = resolve_llm_config(&db, &api_key, model_id)?;
+    let model = config.model();
     let pending =
         fetch_conversations_for_scoring(&db, None, Some(&project_path), min_user_messages)?;
 
@@ -1355,7 +1336,7 @@ pub async fn score_project(
         return Ok(Vec::new());
     }
 
-    let results = score_and_persist(&db, &pending, &config, &deployment).await?;
+    let results = score_and_persist(&db, &pending, &config, &model).await?;
 
     let conn_arc = db.raw();
     if let Err(e) = tokio::task::spawn_blocking(move || {
@@ -1457,15 +1438,15 @@ pub async fn score_pending(
     api_key: String,
     model_id: Option<String>,
 ) -> Result<Vec<ScoringResult>, String> {
-    let config = resolve_azure_config(&db, &api_key, model_id)?;
-    let deployment = config.chat_deployment.clone();
+    let config = resolve_llm_config(&db, &api_key, model_id)?;
+    let model = config.model();
     let pending = fetch_conversations_for_scoring(&db, None, None, None)?;
 
     if pending.is_empty() {
         return Ok(Vec::new());
     }
 
-    score_and_persist(&db, &pending, &config, &deployment).await
+    score_and_persist(&db, &pending, &config, &model).await
 }
 
 /// Score a single conversation if it is un-scored or stale.
@@ -1476,8 +1457,8 @@ pub async fn score_conversation(
     conversation_id: i64,
     model_id: Option<String>,
 ) -> Result<ScoringResult, String> {
-    let config = resolve_azure_config(&db, &api_key, model_id)?;
-    let deployment = config.chat_deployment.clone();
+    let config = resolve_llm_config(&db, &api_key, model_id)?;
+    let model = config.model();
     let pending = fetch_conversations_for_scoring(&db, Some(conversation_id), None, None)?;
 
     if pending.is_empty() {
@@ -1486,7 +1467,7 @@ pub async fn score_conversation(
         ));
     }
 
-    let mut results = score_and_persist(&db, &pending, &config, &deployment).await?;
+    let mut results = score_and_persist(&db, &pending, &config, &model).await?;
     results
         .pop()
         .ok_or_else(|| "Scoring produced no result".to_string())
@@ -1623,14 +1604,14 @@ fn fetch_conversations_for_scoring(
 async fn score_and_persist(
     db: &Database,
     pending: &[ConversationForScoring],
-    config: &AzureOpenAIConfig,
-    deployment: &str,
+    config: &LlmConfig,
+    model: &str,
 ) -> Result<Vec<ScoringResult>, String> {
     let mut all_results: Vec<ScoringResult> = Vec::new();
 
     for batch in pending.chunks(5) {
         let results =
-            crate::scoring::scorer::score_batch(batch, config, deployment).await?;
+            crate::scoring::scorer::score_batch(batch, config, model).await?;
         persist_scoring_results(db, &results)?;
         all_results.extend(results);
     }
@@ -2017,7 +1998,7 @@ pub async fn scan_project_rules(
 }
 
 /// Score the project's rule files against its detected tech stack using
-/// the configured Azure OpenAI deployment. Persists the result so future
+/// the configured LLM provider. Persists the result so future
 /// calls to `scan_project_rules` return it without a second LLM round-trip.
 #[tauri::command]
 pub async fn score_project_rules(
@@ -2026,15 +2007,15 @@ pub async fn score_project_rules(
     project_path: String,
     model_id: Option<String>,
 ) -> Result<ProjectRulesScore, String> {
-    let config = resolve_azure_config(&db, &api_key, model_id)?;
-    let deployment = config.chat_deployment.clone();
+    let config = resolve_llm_config(&db, &api_key, model_id)?;
+    let model = config.model();
 
     let path_clone = project_path.clone();
     let report = tokio::task::spawn_blocking(move || scanner_scan(&path_clone))
         .await
         .map_err(|e| format!("scan_project_rules panicked: {e}"))?;
 
-    let score = score_project_rules_with_llm(&report, &config, &deployment).await?;
+    let score = score_project_rules_with_llm(&report, &config, &model).await?;
     persist_project_rules_score(&db, &report, &score)?;
     Ok(score)
 }

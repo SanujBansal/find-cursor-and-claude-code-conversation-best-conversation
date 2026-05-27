@@ -27,12 +27,16 @@ export interface AppSettings {
   /** Azure OpenAI endpoint URL override (falls back to AZURE_OPENAI_ENDPOINT from `.env`) */
   azureEndpoint: string;
   /** Azure OpenAI API key override (falls back to AZURE_OPENAI_API_KEY from `.env`) */
-  openaiApiKey: string;
+  azureApiKey: string;
+  /** Direct OpenAI API key override (falls back to OPENAI_API_KEY from `.env`) */
+  openAiApiKey: string;
   scoringModel: string;
   cursorDataPath: string;
   claudeCodePath: string;
   claudeMarkdownPath: string;
   azureConfigured?: boolean;
+  openAiConfigured?: boolean;
+  aiProvider?: "openai" | "azure" | "";
   azureEnvPath?: string;
 }
 
@@ -106,20 +110,39 @@ export interface JobRecord {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   azureEndpoint: "",
-  openaiApiKey: "",
+  azureApiKey: "",
+  openAiApiKey: "",
   scoringModel: "gpt-4.1-mini",
   cursorDataPath: "",
   claudeCodePath: "",
   claudeMarkdownPath: "",
   azureConfigured: false,
+  openAiConfigured: false,
+  aiProvider: "",
   azureEnvPath: ".env",
 };
 
 export function hasAiCredentials(settings: AppSettings): boolean {
   return Boolean(
-    settings.azureConfigured ||
-      (settings.azureEndpoint.trim() && settings.openaiApiKey.trim()),
+    settings.openAiConfigured ||
+      settings.azureConfigured ||
+      settings.openAiApiKey.trim() ||
+      (settings.azureEndpoint.trim() && settings.azureApiKey.trim()),
   );
+}
+
+export function getActiveApiKey(settings: AppSettings): string {
+  if (settings.aiProvider === "openai" || settings.openAiConfigured) {
+    return settings.openAiApiKey;
+  }
+  return settings.azureApiKey;
+}
+
+export function aiProviderLabel(settings: AppSettings): string {
+  if (settings.aiProvider === "openai" || settings.openAiConfigured) {
+    return "OpenAI";
+  }
+  return "Azure OpenAI";
 }
 
 export interface ImportResult {
