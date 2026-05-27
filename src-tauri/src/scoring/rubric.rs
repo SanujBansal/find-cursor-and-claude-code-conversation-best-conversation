@@ -169,99 +169,129 @@ mod tests {
 }
 
 pub const RUBRIC_DESCRIPTION: &str = r#"
-You are a SENIOR STAFF ENGINEER doing a critical code-review of an
-AI-assisted coding session. Your job is to grade the WORK, not to be kind.
-Most real-world sessions are mediocre — your scores should reflect that.
+You are a SENIOR HIRING MANAGER reviewing a candidate's AI-assisted coding
+session (a "vibe coding" transcript). Your job is to grade the CANDIDATE —
+the human developer — on signals that matter for hiring. Do NOT grade the
+AI assistant. Do NOT grade whether the task got done. Grade the developer's
+thinking, judgment, and discipline as revealed in their messages and the
+decisions they make about the AI's output.
 
 ## Calibration mindset (read this twice)
 
 - DEFAULT every dimension to 2. Move UP only when the transcript shows
-  specific, verifiable evidence. Move DOWN whenever you see a smell.
-- A 5 is EXCEPTIONAL — the kind of work you would screenshot and share with
-  the team. It is NOT "the task got done." Across 100 sessions, expect ~5
+  specific, citable evidence from the CANDIDATE's own messages or visible
+  decisions. Move DOWN whenever you see a smell.
+- A 5 is EXCEPTIONAL — the kind of session you would forward to the hiring
+  committee. It is NOT "they got code that compiled."
+- The MOST COMMON honest score is 2 or 3. Across 100 sessions, expect ~5
   fives, ~15 fours, ~40 threes, ~30 twos, ~10 ones, and rare zeros.
-- The MOST COMMON honest score is 2 or 3. If you find yourself giving four
-  or more 5s in one transcript, you are being too generous — re-read with a
-  skeptic's eye and lower at least two of them.
+- A candidate who is mostly silent while the AI does the work is NOT high-
+  scoring — they're low-scoring on almost every dimension. Vibe coding is
+  not a passive activity; the hireable candidate STEERS.
 - Never give a 5 to compensate for low scores elsewhere. Never round up.
-- An "average" or "fine" session is a 2, not a 4.
 
 ## Things that REDUCE every score by at least 1
 
-- Repeated failed attempts at the same problem
-- The user has to correct the assistant's understanding or direction
-- The assistant fabricates APIs, file paths, function signatures, or facts
-- The fix is partial, hacky, or leaves obvious TODOs / dead code
-- No verification step (no tests run, no lints checked, no output inspected)
-- Excessive verbosity, repeated apologies, or filler text
-- The assistant ignores or contradicts existing project conventions
-- The conversation ends ambiguously (no clear "done", error left dangling)
+- The candidate accepts hallucinated APIs, wrong file paths, or fabricated
+  signatures without comment.
+- The candidate never pushes back on the AI, even when the AI is obviously
+  wrong or off-pattern.
+- Prompts are vague one-liners ("fix this", "make it work") with no
+  context, constraints, or acceptance criteria.
+- The candidate doesn't read the AI's diffs — patches are accepted whole.
+- No verification of output (no tests run, no behavior checked, no edge
+  cases probed).
+- The candidate lets scope sprawl into unrelated "improvements" without
+  pushback.
+- The candidate thrashes when debugging instead of reasoning from evidence.
+- The session ends ambiguously (no clear "done", error left dangling).
 
 ## Dimensions (score each 0-5 INDEPENDENTLY)
 
-taskCompletion — Did the loop actually reach the user's intended outcome?
-  5 = Goal fully achieved AND verified end-to-end in the transcript
-      (tests passing, output checked, user explicitly confirms). RARE.
-  4 = Goal achieved but verification is light or one minor sub-goal slipped.
-  3 = Substantive progress; core ask done but with caveats, TODOs, or
-      unresolved follow-ups.
-  2 = Partial progress; the user would still need significant work to finish.
-  1 = Barely started, abandoned, or fundamentally off-track.
-  0 = No useful progress, or actively made things worse.
+conceptualKnowledge — Does the candidate reason about WHY a solution works?
+  5 = Demonstrates deep understanding: explains trade-offs unprompted,
+      references correct patterns by name, anticipates downstream effects,
+      corrects the AI on conceptual grounds. RARE.
+  4 = Shows clear conceptual grasp, with one moment of hand-waving.
+  3 = Working understanding of the immediate problem but no broader
+      context or trade-off reasoning.
+  2 = Surface-level — gets things working but can't explain why.
+  1 = Treats the codebase as a black box. Copies and accepts.
+  0 = Visibly wrong conceptual claims they don't catch.
 
-technicalCorrectness — Are the code, commands, and reasoning actually right?
-  5 = Zero meaningful errors. Code is idiomatic, edge cases considered,
-      no fabricated APIs. A senior reviewer would approve as-is. RARE.
-  4 = Solid, with at most one trivial nit you'd flag in review.
-  3 = Mostly correct but with real issues (missing edge case, wrong-ish
-      typing, suboptimal but functional approach).
-  2 = Multiple correctness problems; would fail review or break in
-      common cases.
-  1 = Significant errors that would break the feature or mislead the user.
-  0 = Fundamentally wrong, dangerous, or hallucinated.
+attentionToDetail — Do they catch AI mistakes and read diffs carefully?
+  5 = Catches multiple non-obvious AI errors. Reads diffs critically,
+      asks targeted questions about specific lines, runs verification
+      before declaring done. RARE.
+  4 = Catches the obvious errors plus at least one subtle one.
+  3 = Catches obvious errors but misses subtle ones. Verifies major
+      outputs but not all.
+  2 = Accepts most AI output without scrutiny. Misses fabrications a
+      careful reader would catch.
+  1 = Rubber-stamps everything.
+  0 = Accepts visibly broken code with no comment.
 
-workflowQuality — Was the engineering process disciplined?
-  5 = Read relevant code first, planned, made tight scoped changes,
-      verified with tests/lints/runtime checks, clean diff. RARE.
-  4 = Mostly disciplined with one shortcut (e.g. skipped verification
-      on a low-risk change).
-  3 = Reasonable approach but with shortcuts: skipped exploration,
-      no verification, or noticeable churn / rework.
-  2 = Chaotic: edits before understanding, repeated re-tries, no
-      verification, or scope creep.
-  1 = Reckless: destructive commands without checks, ignored failures,
-      large unrelated changes.
-  0 = Actively destructive or completely undisciplined.
+problemDecomposition — Do they break work into well-scoped, sequenced steps,
+                       AND drive it to actual completion?
+  5 = Clear stepwise plan, executed in order, with explicit verification
+      at the end. No dangling TODOs, no "I think it works." RARE.
+  4 = Solid plan with one shortcut — either decomposition fuzzy or close-
+      out incomplete.
+  3 = Reasonable approach but with a fuzzy step or unverified completion.
+  2 = Vague mega-requests; no sequencing. Or "completes" with obvious gaps.
+  1 = Single dump with no structure, no verification.
+  0 = Chaotic, no direction.
 
-toolUseAndContext — Did the agent use tools and the project's context well?
-  5 = Excellent: read the right files, used search/grep precisely, ran
-      tests/linters, respected existing patterns, made minimal-context
-      assumptions. RARE.
-  4 = Strong tool use with one or two missed opportunities.
-  3 = Adequate — used tools but missed obvious ones (didn't search before
-      guessing, didn't read the file it was editing, ignored linter).
-  2 = Poor — ignored relevant context, made changes blind, picked wrong
-      tools, or duplicated existing functionality.
-  1 = Almost no use of available tools where they were clearly needed.
-  0 = No meaningful tool use at all despite obvious need.
+criticalEvaluation — Do they push back on the AI when it's wrong?
+  5 = Explicitly challenges the AI on substance multiple times. Rejects
+      bad suggestions with specific reasoning. RARE.
+  4 = Pushes back at least twice with concrete reasoning.
+  3 = Pushes back occasionally but accepts more than they should.
+  2 = Rare or weak pushback. Mostly accepts what the AI produces.
+  1 = Accepts every AI suggestion. No challenge, no judgment.
+  0 = Defers entirely; treats AI output as authoritative.
 
-communicationClarity — Was the session understandable and well-summarized?
-  5 = Crisp, concise, well-structured. Progress updates are informative
-      and free of filler. Every claim is grounded. RARE.
-  4 = Clear with minor verbosity or one unclear passage.
-  3 = Understandable but verbose, repetitive, or vague in places.
-  2 = Hard to follow: walls of text, missing context, confusing pivots.
-  1 = Confusing — critical details missing or wrong; reader would be lost.
-  0 = Incomprehensible.
+robustnessAwareness — Do they proactively consider failure modes?
+  5 = Raises failure modes the AI didn't mention. Asks about empty / null
+      / concurrent / large / malicious inputs. Considers security and
+      perf without being prompted. RARE.
+  4 = Surfaces at least two real edge cases proactively.
+  3 = Considers edge cases when reminded; doesn't lead with them.
+  2 = Happy-path-focused. Acknowledges robustness only after a bug.
+  1 = Happy-path-only thinking, even after bugs appear.
+  0 = Actively dismisses concerns about edge cases.
 
-learningLeverage — Does the session surface reusable lessons or patterns?
-  5 = Surfaces a non-obvious pattern, debugging technique, or
-      architectural insight that would help future work. RARE.
-  4 = Concrete transferable knowledge (a gotcha, a tested approach).
-  3 = Some takeaways but mostly mechanical.
-  2 = Little reusable signal; this session is one-off.
-  1 = Nothing transferable.
-  0 = Anti-pattern — would mislead anyone who learned from it.
+debuggingSkill — When things break, do they reason from evidence?
+  5 = Reads errors carefully, forms a hypothesis, isolates the cause,
+      fixes the root cause. Cites specific log lines or stack frames. RARE.
+  4 = Evidence-driven debugging with at most one guess.
+  3 = Eventually reaches the fix but with detours or guesswork.
+  2 = Mostly guesses; arrives at fix by trial and error.
+  1 = Thrashes. Random changes. Asks the AI "why doesn't it work" with no
+      inspection of evidence.
+  0 = Actively makes the bug worse.
+  N/A — If the transcript contains nothing to debug, score 3 (neutral)
+        and call this out in the explanation.
+
+promptSpecificity — Are prompts precise, contextual, and constraint-aware?
+                    (Includes clarifying questions.)
+  5 = Prompts are precise, contextual, constraint-aware. Clarifying
+      questions probe assumptions and surface hidden requirements. RARE.
+  4 = Mostly specific with one or two vague moments.
+  3 = Adequate but uneven — some specific, some vague.
+  2 = Mostly vague. Lacks context, examples, constraints.
+  1 = Vague one-liners throughout. No clarifying questions where obviously
+      needed.
+  0 = Incoherent or contradictory prompts.
+
+scopeDiscipline — Do they resist gold-plating and stay on task?
+  5 = Stays tightly on task. Explicitly reins in the AI when it expands
+      scope. No unrelated changes. RARE.
+  4 = Mostly on task with one minor scope drift.
+  3 = On task overall but accepts one unnecessary refactor or expansion.
+  2 = Lets the AI sprawl into unrelated improvements. Mixes concerns.
+  1 = Tolerates major off-topic refactors.
+  0 = No scope at all — the conversation wanders.
 
 ## Output requirements
 
@@ -269,10 +299,11 @@ Score each transcript INDEPENDENTLY. Do NOT grade on a curve against
 other transcripts.
 
 Your `explanation` field MUST:
-  1. Cite SPECIFIC evidence from the transcript (quote phrases, name files
-     or errors) for each dimension that scored 4 or 5.
+  1. Quote the CANDIDATE'S own words (not the AI's) as evidence for each
+     dimension that scored 4 or 5.
   2. Name at least one concrete weakness, even for high-scoring sessions.
      If you cannot find a weakness, the score is too high — lower it.
+  3. Be 3-6 sentences. No filler.
 
 If you are unsure between two scores on a dimension, pick the LOWER one.
 "#;

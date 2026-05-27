@@ -80,9 +80,9 @@ pub struct WeeklyTrendPoint {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WeakRubric {
-    pub dimension: String,  // e.g. "taskCompletion"
+    pub dimension: String,  // e.g. "conceptualKnowledge"
     pub average_score: f64,
-    pub label: String,      // human-readable, e.g. "Task Completion"
+    pub label: String,      // human-readable, e.g. "Conceptual Knowledge"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -215,8 +215,9 @@ pub async fn get_dashboard(db: tauri::State<'_, Database>) -> Result<DashboardDa
                 "SELECT
                     c.id, c.title, c.provider, p.name, c.source_path,
                     s.final_score, c.completed_at, c.message_count, c.tool_call_count,
-                    s.task_completion, s.technical_correctness, s.workflow_quality,
-                    s.tool_use_and_context, s.communication_clarity, s.learning_leverage,
+                    s.conceptual_knowledge, s.attention_to_detail, s.problem_decomposition,
+                    s.critical_evaluation, s.robustness_awareness, s.debugging_skill,
+                    s.prompt_specificity, s.scope_discipline,
                     s.explanation, s.model_id, s.scored_at
                  FROM conversations c
                  LEFT JOIN projects p ON p.id = c.project_id
@@ -240,15 +241,17 @@ pub async fn get_dashboard(db: tauri::State<'_, Database>) -> Result<DashboardDa
                     completed_at: row.get(6)?,
                     message_count: row.get(7)?,
                     tool_call_count: row.get(8)?,
-                    task_completion: row.get(9)?,
-                    technical_correctness: row.get(10)?,
-                    workflow_quality: row.get(11)?,
-                    tool_use_and_context: row.get(12)?,
-                    communication_clarity: row.get(13)?,
-                    learning_leverage: row.get(14)?,
-                    explanation: row.get(15)?,
-                    model_id: row.get(16)?,
-                    scored_at: row.get(17)?,
+                    conceptual_knowledge: row.get(9)?,
+                    attention_to_detail: row.get(10)?,
+                    problem_decomposition: row.get(11)?,
+                    critical_evaluation: row.get(12)?,
+                    robustness_awareness: row.get(13)?,
+                    debugging_skill: row.get(14)?,
+                    prompt_specificity: row.get(15)?,
+                    scope_discipline: row.get(16)?,
+                    explanation: row.get(17)?,
+                    model_id: row.get(18)?,
+                    scored_at: row.get(19)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -481,12 +484,14 @@ fn compute_weak_rubrics(conn: &rusqlite::Connection) -> Result<Vec<WeakRubric>, 
     let mut stmt = conn
         .prepare(
             "SELECT
-                AVG(s.task_completion),
-                AVG(s.technical_correctness),
-                AVG(s.workflow_quality),
-                AVG(s.tool_use_and_context),
-                AVG(s.communication_clarity),
-                AVG(s.learning_leverage)
+                AVG(s.conceptual_knowledge),
+                AVG(s.attention_to_detail),
+                AVG(s.problem_decomposition),
+                AVG(s.critical_evaluation),
+                AVG(s.robustness_awareness),
+                AVG(s.debugging_skill),
+                AVG(s.prompt_specificity),
+                AVG(s.scope_discipline)
              FROM scores s
              JOIN conversations c ON c.id = s.conversation_id
              WHERE c.completed_at >= ?1",
@@ -494,15 +499,17 @@ fn compute_weak_rubrics(conn: &rusqlite::Connection) -> Result<Vec<WeakRubric>, 
         .map_err(|e| e.to_string())?;
 
     type DimEntry = (&'static str, &'static str, Option<f64>);
-    let averages: [DimEntry; 6] = stmt
+    let averages: [DimEntry; 8] = stmt
         .query_row([&cutoff], |row| {
             Ok([
-                ("taskCompletion", "Task Completion", row.get::<_, Option<f64>>(0)?),
-                ("technicalCorrectness", "Technical Correctness", row.get::<_, Option<f64>>(1)?),
-                ("workflowQuality", "Workflow Quality", row.get::<_, Option<f64>>(2)?),
-                ("toolUseAndContext", "Tool Use & Context", row.get::<_, Option<f64>>(3)?),
-                ("communicationClarity", "Communication Clarity", row.get::<_, Option<f64>>(4)?),
-                ("learningLeverage", "Learning Leverage", row.get::<_, Option<f64>>(5)?),
+                ("conceptualKnowledge",   "Conceptual Knowledge",   row.get::<_, Option<f64>>(0)?),
+                ("attentionToDetail",     "Attention to Detail",    row.get::<_, Option<f64>>(1)?),
+                ("problemDecomposition",  "Problem Decomposition",  row.get::<_, Option<f64>>(2)?),
+                ("criticalEvaluation",    "Critical Evaluation",    row.get::<_, Option<f64>>(3)?),
+                ("robustnessAwareness",   "Robustness Awareness",   row.get::<_, Option<f64>>(4)?),
+                ("debuggingSkill",        "Debugging Skill",        row.get::<_, Option<f64>>(5)?),
+                ("promptSpecificity",     "Prompt Specificity",     row.get::<_, Option<f64>>(6)?),
+                ("scopeDiscipline",       "Scope Discipline",       row.get::<_, Option<f64>>(7)?),
             ])
         })
         .map_err(|e| e.to_string())?;
@@ -1284,12 +1291,14 @@ pub struct MessageRecord {
 pub struct ScoreRecord {
     pub id: i64,
     pub conversation_id: i64,
-    pub task_completion: f64,
-    pub technical_correctness: f64,
-    pub workflow_quality: f64,
-    pub tool_use_and_context: f64,
-    pub communication_clarity: f64,
-    pub learning_leverage: f64,
+    pub conceptual_knowledge: f64,
+    pub attention_to_detail: f64,
+    pub problem_decomposition: f64,
+    pub critical_evaluation: f64,
+    pub robustness_awareness: f64,
+    pub debugging_skill: f64,
+    pub prompt_specificity: f64,
+    pub scope_discipline: f64,
     pub final_score: f64,
     pub explanation: Option<String>,
     pub model_id: String,
@@ -1314,12 +1323,14 @@ pub struct ConversationWithScore {
     pub completed_at: Option<String>,
     pub message_count: i64,
     pub tool_call_count: i64,
-    pub task_completion: Option<f64>,
-    pub technical_correctness: Option<f64>,
-    pub workflow_quality: Option<f64>,
-    pub tool_use_and_context: Option<f64>,
-    pub communication_clarity: Option<f64>,
-    pub learning_leverage: Option<f64>,
+    pub conceptual_knowledge: Option<f64>,
+    pub attention_to_detail: Option<f64>,
+    pub problem_decomposition: Option<f64>,
+    pub critical_evaluation: Option<f64>,
+    pub robustness_awareness: Option<f64>,
+    pub debugging_skill: Option<f64>,
+    pub prompt_specificity: Option<f64>,
+    pub scope_discipline: Option<f64>,
     pub explanation: Option<String>,
     pub model_id: Option<String>,
     pub scored_at: Option<String>,
@@ -1381,12 +1392,14 @@ pub fn get_project_top_conversations(
                     c.completed_at,
                     c.message_count,
                     c.tool_call_count,
-                    s.task_completion,
-                    s.technical_correctness,
-                    s.workflow_quality,
-                    s.tool_use_and_context,
-                    s.communication_clarity,
-                    s.learning_leverage,
+                    s.conceptual_knowledge,
+                    s.attention_to_detail,
+                    s.problem_decomposition,
+                    s.critical_evaluation,
+                    s.robustness_awareness,
+                    s.debugging_skill,
+                    s.prompt_specificity,
+                    s.scope_discipline,
                     s.explanation,
                     s.model_id,
                     s.scored_at
@@ -1416,15 +1429,17 @@ pub fn get_project_top_conversations(
                     completed_at: row.get(6)?,
                     message_count: row.get(7)?,
                     tool_call_count: row.get(8)?,
-                    task_completion: row.get(9)?,
-                    technical_correctness: row.get(10)?,
-                    workflow_quality: row.get(11)?,
-                    tool_use_and_context: row.get(12)?,
-                    communication_clarity: row.get(13)?,
-                    learning_leverage: row.get(14)?,
-                    explanation: row.get(15)?,
-                    model_id: row.get(16)?,
-                    scored_at: row.get(17)?,
+                    conceptual_knowledge: row.get(9)?,
+                    attention_to_detail: row.get(10)?,
+                    problem_decomposition: row.get(11)?,
+                    critical_evaluation: row.get(12)?,
+                    robustness_awareness: row.get(13)?,
+                    debugging_skill: row.get(14)?,
+                    prompt_specificity: row.get(15)?,
+                    scope_discipline: row.get(16)?,
+                    explanation: row.get(17)?,
+                    model_id: row.get(18)?,
+                    scored_at: row.get(19)?,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -1632,35 +1647,41 @@ fn persist_scoring_results(db: &Database, results: &[ScoringResult]) -> Result<(
             })?;
             conn.execute(
                 "INSERT INTO scores
-                    (conversation_id, task_completion, technical_correctness,
-                     workflow_quality, tool_use_and_context, communication_clarity,
-                     learning_leverage, final_score, explanation, model_id,
+                    (conversation_id,
+                     conceptual_knowledge, attention_to_detail, problem_decomposition,
+                     critical_evaluation, robustness_awareness, debugging_skill,
+                     prompt_specificity, scope_discipline,
+                     final_score, explanation, model_id,
                      rubric_version, prompt_version, content_hash, cache_key,
                      scored_at, created_at)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
                  ON CONFLICT(conversation_id) DO UPDATE SET
-                    task_completion      = excluded.task_completion,
-                    technical_correctness= excluded.technical_correctness,
-                    workflow_quality     = excluded.workflow_quality,
-                    tool_use_and_context = excluded.tool_use_and_context,
-                    communication_clarity= excluded.communication_clarity,
-                    learning_leverage    = excluded.learning_leverage,
-                    final_score          = excluded.final_score,
-                    explanation          = excluded.explanation,
-                    model_id             = excluded.model_id,
-                    rubric_version       = excluded.rubric_version,
-                    prompt_version       = excluded.prompt_version,
-                    content_hash         = excluded.content_hash,
-                    cache_key            = excluded.cache_key,
-                    scored_at            = excluded.scored_at",
+                    conceptual_knowledge  = excluded.conceptual_knowledge,
+                    attention_to_detail   = excluded.attention_to_detail,
+                    problem_decomposition = excluded.problem_decomposition,
+                    critical_evaluation   = excluded.critical_evaluation,
+                    robustness_awareness  = excluded.robustness_awareness,
+                    debugging_skill       = excluded.debugging_skill,
+                    prompt_specificity    = excluded.prompt_specificity,
+                    scope_discipline      = excluded.scope_discipline,
+                    final_score           = excluded.final_score,
+                    explanation           = excluded.explanation,
+                    model_id              = excluded.model_id,
+                    rubric_version        = excluded.rubric_version,
+                    prompt_version        = excluded.prompt_version,
+                    content_hash          = excluded.content_hash,
+                    cache_key             = excluded.cache_key,
+                    scored_at             = excluded.scored_at",
                 params![
                     conv_id,
-                    r.dimensions.task_completion,
-                    r.dimensions.technical_correctness,
-                    r.dimensions.workflow_quality,
-                    r.dimensions.tool_use_and_context,
-                    r.dimensions.communication_clarity,
-                    r.dimensions.learning_leverage,
+                    r.dimensions.conceptual_knowledge,
+                    r.dimensions.attention_to_detail,
+                    r.dimensions.problem_decomposition,
+                    r.dimensions.critical_evaluation,
+                    r.dimensions.robustness_awareness,
+                    r.dimensions.debugging_skill,
+                    r.dimensions.prompt_specificity,
+                    r.dimensions.scope_discipline,
                     r.final_score,
                     r.explanation,
                     r.model_id,
@@ -1689,8 +1710,9 @@ pub fn get_scores(
             let mut stmt = conn
                 .prepare(
                     "SELECT id, conversation_id,
-                            task_completion, technical_correctness, workflow_quality,
-                            tool_use_and_context, communication_clarity, learning_leverage,
+                            conceptual_knowledge, attention_to_detail, problem_decomposition,
+                            critical_evaluation, robustness_awareness, debugging_skill,
+                            prompt_specificity, scope_discipline,
                             final_score, explanation, model_id, rubric_version, prompt_version,
                             content_hash, cache_key, scored_at, created_at
                      FROM scores
@@ -1708,8 +1730,9 @@ pub fn get_scores(
             let mut stmt = conn
                 .prepare(
                     "SELECT id, conversation_id,
-                            task_completion, technical_correctness, workflow_quality,
-                            tool_use_and_context, communication_clarity, learning_leverage,
+                            conceptual_knowledge, attention_to_detail, problem_decomposition,
+                            critical_evaluation, robustness_awareness, debugging_skill,
+                            prompt_specificity, scope_discipline,
                             final_score, explanation, model_id, rubric_version, prompt_version,
                             content_hash, cache_key, scored_at, created_at
                      FROM scores
@@ -1730,21 +1753,23 @@ fn map_score_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScoreRecord> {
     Ok(ScoreRecord {
         id: row.get(0)?,
         conversation_id: row.get(1)?,
-        task_completion: row.get(2)?,
-        technical_correctness: row.get(3)?,
-        workflow_quality: row.get(4)?,
-        tool_use_and_context: row.get(5)?,
-        communication_clarity: row.get(6)?,
-        learning_leverage: row.get(7)?,
-        final_score: row.get(8)?,
-        explanation: row.get(9)?,
-        model_id: row.get(10)?,
-        rubric_version: row.get(11)?,
-        prompt_version: row.get(12)?,
-        content_hash: row.get(13)?,
-        cache_key: row.get(14)?,
-        scored_at: row.get(15)?,
-        created_at: row.get(16)?,
+        conceptual_knowledge: row.get(2)?,
+        attention_to_detail: row.get(3)?,
+        problem_decomposition: row.get(4)?,
+        critical_evaluation: row.get(5)?,
+        robustness_awareness: row.get(6)?,
+        debugging_skill: row.get(7)?,
+        prompt_specificity: row.get(8)?,
+        scope_discipline: row.get(9)?,
+        final_score: row.get(10)?,
+        explanation: row.get(11)?,
+        model_id: row.get(12)?,
+        rubric_version: row.get(13)?,
+        prompt_version: row.get(14)?,
+        content_hash: row.get(15)?,
+        cache_key: row.get(16)?,
+        scored_at: row.get(17)?,
+        created_at: row.get(18)?,
     })
 }
 
@@ -1769,12 +1794,14 @@ pub fn get_top_conversations(
                     c.completed_at,
                     c.message_count,
                     c.tool_call_count,
-                    s.task_completion,
-                    s.technical_correctness,
-                    s.workflow_quality,
-                    s.tool_use_and_context,
-                    s.communication_clarity,
-                    s.learning_leverage,
+                    s.conceptual_knowledge,
+                    s.attention_to_detail,
+                    s.problem_decomposition,
+                    s.critical_evaluation,
+                    s.robustness_awareness,
+                    s.debugging_skill,
+                    s.prompt_specificity,
+                    s.scope_discipline,
                     s.explanation,
                     s.model_id,
                     s.scored_at
@@ -1800,15 +1827,17 @@ pub fn get_top_conversations(
                     completed_at: row.get(6)?,
                     message_count: row.get(7)?,
                     tool_call_count: row.get(8)?,
-                    task_completion: row.get(9)?,
-                    technical_correctness: row.get(10)?,
-                    workflow_quality: row.get(11)?,
-                    tool_use_and_context: row.get(12)?,
-                    communication_clarity: row.get(13)?,
-                    learning_leverage: row.get(14)?,
-                    explanation: row.get(15)?,
-                    model_id: row.get(16)?,
-                    scored_at: row.get(17)?,
+                    conceptual_knowledge: row.get(9)?,
+                    attention_to_detail: row.get(10)?,
+                    problem_decomposition: row.get(11)?,
+                    critical_evaluation: row.get(12)?,
+                    robustness_awareness: row.get(13)?,
+                    debugging_skill: row.get(14)?,
+                    prompt_specificity: row.get(15)?,
+                    scope_discipline: row.get(16)?,
+                    explanation: row.get(17)?,
+                    model_id: row.get(18)?,
+                    scored_at: row.get(19)?,
                 })
             })
             .map_err(|e| e.to_string())?

@@ -14,12 +14,14 @@ export type JobType =
   | "aggregate";
 
 export type RubricDimension =
-  | "taskCompletion"
-  | "technicalCorrectness"
-  | "workflowQuality"
-  | "toolUseAndContext"
-  | "communicationClarity"
-  | "learningLeverage";
+  | "conceptualKnowledge"
+  | "attentionToDetail"
+  | "problemDecomposition"
+  | "criticalEvaluation"
+  | "robustnessAwareness"
+  | "debuggingSkill"
+  | "promptSpecificity"
+  | "scopeDiscipline";
 
 export interface AppSettings {
   /** Azure OpenAI endpoint URL override (falls back to AZURE_OPENAI_ENDPOINT from `.env`) */
@@ -48,7 +50,7 @@ export interface WeeklyTrendPoint {
 }
 
 export interface WeakRubric {
-  dimension: string;   // "taskCompletion" etc.
+  dimension: string;   // "conceptualKnowledge" etc.
   averageScore: number;
   label: string;       // "Task Completion" etc.
 }
@@ -162,12 +164,14 @@ export interface JobStatusRecord {
 // ── Phase 4: Scoring Engine ───────────────────────────────────────────────────
 
 export interface RubricDimensions {
-  taskCompletion: number;
-  technicalCorrectness: number;
-  workflowQuality: number;
-  toolUseAndContext: number;
-  communicationClarity: number;
-  learningLeverage: number;
+  conceptualKnowledge: number;
+  attentionToDetail: number;
+  problemDecomposition: number;
+  criticalEvaluation: number;
+  robustnessAwareness: number;
+  debuggingSkill: number;
+  promptSpecificity: number;
+  scopeDiscipline: number;
 }
 
 export interface ScoringResult {
@@ -186,12 +190,14 @@ export interface ScoringResult {
 export interface ScoreRecord {
   id: number;
   conversationId: number;
-  taskCompletion: number;
-  technicalCorrectness: number;
-  workflowQuality: number;
-  toolUseAndContext: number;
-  communicationClarity: number;
-  learningLeverage: number;
+  conceptualKnowledge: number;
+  attentionToDetail: number;
+  problemDecomposition: number;
+  criticalEvaluation: number;
+  robustnessAwareness: number;
+  debuggingSkill: number;
+  promptSpecificity: number;
+  scopeDiscipline: number;
   finalScore: number;
   explanation: string | null;
   modelId: string;
@@ -213,12 +219,14 @@ export interface ConversationWithScore {
   completedAt: string | null;
   messageCount: number;
   toolCallCount: number;
-  taskCompletion: number | null;
-  technicalCorrectness: number | null;
-  workflowQuality: number | null;
-  toolUseAndContext: number | null;
-  communicationClarity: number | null;
-  learningLeverage: number | null;
+  conceptualKnowledge: number | null;
+  attentionToDetail: number | null;
+  problemDecomposition: number | null;
+  criticalEvaluation: number | null;
+  robustnessAwareness: number | null;
+  debuggingSkill: number | null;
+  promptSpecificity: number | null;
+  scopeDiscipline: number | null;
   explanation: string | null;
   modelId: string | null;
   scoredAt: string | null;

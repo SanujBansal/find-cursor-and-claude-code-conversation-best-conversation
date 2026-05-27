@@ -15,12 +15,14 @@ import type { MessageRecord, ScoreRecord } from "../../../src/lib/types";
 import { hasAiCredentials } from "../../../src/lib/types";
 
 const DIMENSION_LABELS: Record<string, string> = {
-  taskCompletion: "Task Completion",
-  technicalCorrectness: "Technical Correctness",
-  workflowQuality: "Workflow Quality",
-  toolUseAndContext: "Tool Use & Context",
-  communicationClarity: "Communication Clarity",
-  learningLeverage: "Learning Leverage",
+  conceptualKnowledge: "Conceptual Knowledge",
+  attentionToDetail: "Attention to Detail",
+  problemDecomposition: "Problem Decomposition",
+  criticalEvaluation: "Critical Evaluation",
+  robustnessAwareness: "Robustness Awareness",
+  debuggingSkill: "Debugging Skill",
+  promptSpecificity: "Prompt Specificity",
+  scopeDiscipline: "Scope Discipline",
 };
 
 const DIMENSION_KEYS = Object.keys(DIMENSION_LABELS);

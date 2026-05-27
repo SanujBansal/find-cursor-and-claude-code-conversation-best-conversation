@@ -2,7 +2,7 @@ use sha2::{Digest, Sha256};
 
 use crate::scoring::rubric::{RUBRIC_DESCRIPTION, RUBRIC_VERSION};
 
-pub const PROMPT_VERSION: &str = "v2";
+pub const PROMPT_VERSION: &str = "v3";
 
 pub struct PromptInput {
     pub content_hash: String,
