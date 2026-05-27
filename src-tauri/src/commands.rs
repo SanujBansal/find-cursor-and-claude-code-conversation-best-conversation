@@ -2150,10 +2150,12 @@ pub async fn analyze_chat_vibe(
             )
             .map_err(|e| e.to_string())?;
 
-        stmt.query_map([conversation_id], |row| row.get::<_, String>(0))
+        let rows = stmt
+            .query_map([conversation_id], |row| row.get::<_, String>(0))
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        Ok(rows)
     })?;
 
     if user_messages.is_empty() {
