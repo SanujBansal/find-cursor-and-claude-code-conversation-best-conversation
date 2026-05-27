@@ -2,21 +2,18 @@ mod analytics;
 mod azure;
 mod commands;
 mod db;
-mod embeddings;
 mod exporters;
 mod importers;
+mod rules;
 mod scoring;
-mod search;
-mod suggestions;
 
 use commands::{
-    chat_search, clear_all_transcripts, dismiss_suggestion, embed_pending, export_conversation_markdown,
-    generate_suggestions, get_conversation_export_markdown, get_conversation_messages, get_dashboard,
-    get_default_cursor_path, get_import_status, get_project_top_conversations, get_scores, get_settings,
-    get_suggestions, get_top_conversations, get_trend_data, import_all, import_all_and_score,
-    import_claude_code,
-    import_claude_markdown, import_cursor, list_conversations, list_projects, refresh_analytics,
-    save_settings, score_conversation, score_pending, score_project, search_conversations,
+    clear_all_transcripts, export_conversation_markdown, get_conversation_export_markdown,
+    get_conversation_messages, get_dashboard, get_default_cursor_path, get_import_status,
+    get_project_top_conversations, get_scores, get_settings, get_top_conversations, get_trend_data,
+    import_all, import_all_and_score, import_claude_code, import_claude_markdown, import_cursor,
+    list_conversations, list_projects, refresh_analytics, save_settings, scan_project_rules,
+    score_conversation, score_pending, score_project, score_project_rules,
 };
 use db::Database;
 use tauri::Manager;
@@ -51,9 +48,6 @@ pub fn run() {
             clear_all_transcripts,
             get_import_status,
             get_default_cursor_path,
-            embed_pending,
-            search_conversations,
-            chat_search,
             score_pending,
             score_project,
             score_conversation,
@@ -63,11 +57,10 @@ pub fn run() {
             get_conversation_messages,
             get_conversation_export_markdown,
             export_conversation_markdown,
-            generate_suggestions,
-            get_suggestions,
-            dismiss_suggestion,
             refresh_analytics,
-            get_trend_data
+            get_trend_data,
+            scan_project_rules,
+            score_project_rules
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

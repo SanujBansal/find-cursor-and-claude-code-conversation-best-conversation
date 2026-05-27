@@ -11,9 +11,7 @@ export type JobStatus = JobStatusValue;
 export type JobType =
   | "import"
   | "score"
-  | "embed"
-  | "aggregate"
-  | "suggest";
+  | "aggregate";
 
 export type RubricDimension =
   | "taskCompletion"
@@ -29,7 +27,6 @@ export interface AppSettings {
   /** Azure OpenAI API key override (falls back to AZURE_OPENAI_API_KEY from `.env`) */
   openaiApiKey: string;
   scoringModel: string;
-  embeddingModel: string;
   cursorDataPath: string;
   claudeCodePath: string;
   claudeMarkdownPath: string;
@@ -74,15 +71,6 @@ export interface ConversationSummary {
   toolCallCount: number;
 }
 
-export interface LearningSuggestionSummary {
-  id: number;
-  rubricDimension: RubricDimension;
-  concept: string;
-  rationale: string;
-  evidenceConversationIds: number[];
-  generatedAt: string;
-}
-
 export interface DashboardData {
   todayScore: number | null;
   dailyDelta: number | null;
@@ -118,7 +106,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   azureEndpoint: "",
   openaiApiKey: "",
   scoringModel: "gpt-4.1-mini",
-  embeddingModel: "text-embedding-3-small",
   cursorDataPath: "",
   claudeCodePath: "",
   claudeMarkdownPath: "",
@@ -243,36 +230,75 @@ export interface MessageRecord {
   sequenceNum: number;
 }
 
-export interface EmbedResult {
-  embedded: number;
-  chunksCreated: number;
+// ── Phase 6: Project Rules ───────────────────────────────────────────────────
+
+export type RuleKind =
+  | "agents"
+  | "claude"
+  | "gemini"
+  | "cursor-legacy"
+  | "cursor-rule"
+  | "windsurf"
+  | "copilot"
+  | "aider"
+  | "other";
+
+export interface RuleFile {
+  relativePath: string;
+  absolutePath: string;
+  kind: RuleKind;
+  bytes: number;
+  content: string;
+  truncated: boolean;
 }
 
-export interface SearchResult {
-  conversationId: string;
-  conversationTitle: string;
-  projectPath: string | null;
-  chunkText: string;
-  similarity: number;
-  sourceType: string;
+export interface TechStack {
+  languages: string[];
+  frameworks: string[];
+  tooling: string[];
+  signalFiles: string[];
+  detected: boolean;
 }
 
-export interface ChatSearchResponse {
-  answer: string;
-  sources: SearchResult[];
+export interface ProjectRulesReport {
+  projectPath: string;
+  projectName: string;
+  exists: boolean;
+  techStack: TechStack;
+  ruleFiles: RuleFile[];
+  totalBytes: number;
+  contentHash: string;
 }
 
-// ── Phase 7: Learning Suggestions ─────────────────────────────────────────────
-
-export type SuggestionPriority = "high" | "medium" | "low";
-
-export interface LearningSuggestion {
-  id: string;
-  concept: string;
-  whyItHelps: string;
-  relatedDimension: string;
-  priority: SuggestionPriority;
-  exampleConversationId: string | null;
-  generatedAt: string;
-  isDismissed: boolean;
+export interface ProjectRulesScore {
+  projectPath: string;
+  contentHash: string;
+  coverage: number;
+  stackAlignment: number;
+  specificity: number;
+  actionability: number;
+  overallScore: number;
+  summary: string;
+  suggestions: string[];
+  modelId: string;
+  rubricVersion: string;
+  scoredAt: string;
 }
+
+export interface ProjectRulesView {
+  report: ProjectRulesReport;
+  score: ProjectRulesScore | null;
+  stale: boolean;
+}
+
+export const RULE_KIND_LABELS: Record<RuleKind, string> = {
+  agents: "AGENTS.md",
+  claude: "Claude rules",
+  gemini: "Gemini rules",
+  "cursor-legacy": ".cursorrules",
+  "cursor-rule": "Cursor rule",
+  windsurf: "Windsurf rules",
+  copilot: "Copilot instructions",
+  aider: "Aider config",
+  other: "Other instructions",
+};

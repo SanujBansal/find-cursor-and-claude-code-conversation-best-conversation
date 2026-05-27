@@ -49,6 +49,66 @@ function shortDate(iso: string | null): string {
 }
 
 type SortKey = "score" | "date" | "title" | "user";
+type SortDir = "asc" | "desc";
+type ScoreFilter = "all" | "scored" | "unscored";
+
+interface ConversationFilters {
+  scoreStatus: ScoreFilter;
+  minScore: string;
+  maxScore: string;
+  minUserMsgs: string;
+  maxUserMsgs: string;
+  dateFrom: string;
+  dateTo: string;
+}
+
+const DEFAULT_FILTERS: ConversationFilters = {
+  scoreStatus: "all",
+  minScore: "",
+  maxScore: "",
+  minUserMsgs: "",
+  maxUserMsgs: "",
+  dateFrom: "",
+  dateTo: "",
+};
+
+function parseOptionalNumber(value: string, min: number, max: number): number | null {
+  if (value.trim() === "") return null;
+  const n = Number.parseFloat(value);
+  if (Number.isNaN(n)) return null;
+  return Math.min(max, Math.max(min, n));
+}
+
+function hasActiveFilters(filters: ConversationFilters): boolean {
+  return (
+    filters.scoreStatus !== "all" ||
+    filters.minScore !== "" ||
+    filters.maxScore !== "" ||
+    filters.minUserMsgs !== "" ||
+    filters.maxUserMsgs !== "" ||
+    filters.dateFrom !== "" ||
+    filters.dateTo !== ""
+  );
+}
+
+function compareConversations(
+  a: ConversationSummary,
+  b: ConversationSummary,
+  sortKey: SortKey,
+  sortDir: SortDir,
+): number {
+  let cmp = 0;
+  if (sortKey === "score") {
+    cmp = (a.finalScore ?? -1) - (b.finalScore ?? -1);
+  } else if (sortKey === "date") {
+    cmp = (a.completedAt ?? "").localeCompare(b.completedAt ?? "");
+  } else if (sortKey === "user") {
+    cmp = a.userMessageCount - b.userMessageCount;
+  } else {
+    cmp = a.title.localeCompare(b.title);
+  }
+  return sortDir === "asc" ? cmp : -cmp;
+}
 
 function TopConversationCard({
   rank,
@@ -149,9 +209,17 @@ export default function ConversationsPage() {
   const [search, setSearch] = useState("");
   const [projectSearch, setProjectSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [filters, setFilters] = useState<ConversationFilters>(DEFAULT_FILTERS);
   const [scoreMenuOpen, setScoreMenuOpen] = useState(false);
   const [requireMinUserMsgs, setRequireMinUserMsgs] = useState(true);
-  const [minUserMessages, setMinUserMessages] = useState(5);
+  const [minUserMessagesInput, setMinUserMessagesInput] = useState("10");
+  const minUserMessages = useMemo(() => {
+    const n = Number.parseInt(minUserMessagesInput, 10);
+    if (Number.isNaN(n)) return 0;
+    return Math.min(999, Math.max(0, n));
+  }, [minUserMessagesInput]);
   const scoreMenuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const isRuntime = useTauriRuntime();
@@ -200,11 +268,26 @@ export default function ConversationsPage() {
 
   useEffect(() => {
     if (!isRuntime || !selectedProject) {
-      setTopThree([]);
       return;
     }
-    void loadTopThree(selectedProject);
+    let cancelled = false;
+    void (async () => {
+      if (cancelled) return;
+      await loadTopThree(selectedProject);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [isRuntime, selectedProject, convs, loadTopThree]);
+
+  // Derive the displayed Top-3 from the active selection so that stale
+  // results from a previously-selected project never leak through.
+  const displayedTopThree =
+    selectedProject &&
+    topThree.length > 0 &&
+    topThree.every((c) => (c.sourcePath ?? "Unassigned") === selectedProject)
+      ? topThree
+      : [];
 
   const filteredProjects = useMemo(() => {
     if (!projectSearch) return projects;
@@ -216,13 +299,15 @@ export default function ConversationsPage() {
     );
   }, [projects, projectSearch]);
 
+  const projectConversationsAll = useMemo(() => {
+    if (!selectedProject) return [];
+    return convs.filter((c) => (c.sourcePath ?? "Unassigned") === selectedProject);
+  }, [convs, selectedProject]);
+
   const projectConversations = useMemo(() => {
     if (!selectedProject) return [];
 
-    let result = convs.filter((c) => {
-      const path = c.sourcePath ?? "Unassigned";
-      return path === selectedProject;
-    });
+    let result = projectConversationsAll;
 
     if (search) {
       const q = search.toLowerCase();
@@ -233,16 +318,75 @@ export default function ConversationsPage() {
       );
     }
 
-    result = [...result].sort((a, b) => {
-      if (sortKey === "score") return (b.finalScore ?? -1) - (a.finalScore ?? -1);
-      if (sortKey === "date")
-        return (b.completedAt ?? "").localeCompare(a.completedAt ?? "");
-      if (sortKey === "user") return b.userMessageCount - a.userMessageCount;
-      return a.title.localeCompare(b.title);
-    });
+    const minScore = parseOptionalNumber(filters.minScore, 0, 5);
+    const maxScore = parseOptionalNumber(filters.maxScore, 0, 5);
+    const minUserMsgs = parseOptionalNumber(filters.minUserMsgs, 0, 9999);
+    const maxUserMsgs = parseOptionalNumber(filters.maxUserMsgs, 0, 9999);
+
+    if (filters.scoreStatus === "scored") {
+      result = result.filter((c) => c.finalScore != null);
+    } else if (filters.scoreStatus === "unscored") {
+      result = result.filter((c) => c.finalScore == null);
+    }
+
+    if (minScore != null || maxScore != null) {
+      result = result.filter((c) => {
+        if (c.finalScore == null) return false;
+        if (minScore != null && c.finalScore < minScore) return false;
+        if (maxScore != null && c.finalScore > maxScore) return false;
+        return true;
+      });
+    }
+
+    if (minUserMsgs != null) {
+      result = result.filter((c) => c.userMessageCount >= minUserMsgs);
+    }
+    if (maxUserMsgs != null) {
+      result = result.filter((c) => c.userMessageCount <= maxUserMsgs);
+    }
+
+    if (filters.dateFrom) {
+      result = result.filter(
+        (c) => c.completedAt != null && c.completedAt.slice(0, 10) >= filters.dateFrom,
+      );
+    }
+    if (filters.dateTo) {
+      result = result.filter(
+        (c) => c.completedAt != null && c.completedAt.slice(0, 10) <= filters.dateTo,
+      );
+    }
+
+    result = [...result].sort((a, b) =>
+      compareConversations(a, b, sortKey, sortDir),
+    );
 
     return result;
-  }, [convs, selectedProject, search, sortKey]);
+  }, [
+    selectedProject,
+    projectConversationsAll,
+    search,
+    sortKey,
+    sortDir,
+    filters,
+  ]);
+
+  const filtersActive = hasActiveFilters(filters);
+
+  function handleSortClick(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortKey(key);
+    setSortDir(key === "title" ? "asc" : "desc");
+  }
+
+  function updateFilter<K extends keyof ConversationFilters>(
+    key: K,
+    value: ConversationFilters[K],
+  ) {
+    setFilters((current) => ({ ...current, [key]: value }));
+  }
 
   const selectedProjectMeta = projects.find((p) => p.projectPath === selectedProject);
   const unscoredInProject = useMemo(() => {
@@ -395,7 +539,9 @@ export default function ConversationsPage() {
                   </h2>
                   {selectedProjectMeta && (
                     <p className="text-xs text-muted">
-                      {projectConversations.length} conversations
+                      {projectConversations.length === projectConversationsAll.length
+                        ? `${projectConversationsAll.length} conversations`
+                        : `${projectConversations.length} of ${projectConversationsAll.length} conversations`}
                       {unscoredCount > 0 ? ` · ${unscoredCount} unscored` : ""}
                     </p>
                   )}
@@ -432,15 +578,19 @@ export default function ConversationsPage() {
                             <span className="text-xs text-foreground">
                               More than{" "}
                               <input
-                                type="number"
-                                min={0}
-                                max={999}
-                                value={minUserMessages}
+                                type="text"
+                                inputMode="numeric"
+                                value={minUserMessagesInput}
                                 disabled={!requireMinUserMsgs}
                                 onChange={(e) => {
-                                  const n = Number.parseInt(e.target.value, 10);
-                                  if (!Number.isNaN(n) && n >= 0) {
-                                    setMinUserMessages(n);
+                                  const v = e.target.value;
+                                  if (v === "" || /^\d+$/.test(v)) {
+                                    setMinUserMessagesInput(v.slice(0, 3));
+                                  }
+                                }}
+                                onBlur={() => {
+                                  if (minUserMessagesInput === "") {
+                                    setMinUserMessagesInput("0");
                                   }
                                 }}
                                 className="mx-1 w-12 rounded border border-border bg-background px-1 py-0.5 text-center tabular-nums disabled:opacity-50"
@@ -477,11 +627,23 @@ export default function ConversationsPage() {
                     onChange={(e) => setSearch(e.target.value)}
                     className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:border-accent focus:outline-none"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setFiltersOpen((open) => !open)}
+                    className={[
+                      "rounded-lg border px-2.5 py-1 text-[10px] uppercase tracking-wide",
+                      filtersOpen || filtersActive
+                        ? "border-accent/30 bg-accent/10 text-accent"
+                        : "border-border text-muted hover:text-foreground",
+                    ].join(" ")}
+                  >
+                    Filters{filtersActive ? " ·" : ""}
+                  </button>
                   {(["date", "score", "title", "user"] as SortKey[]).map((k) => (
                     <button
                       key={k}
                       type="button"
-                      onClick={() => setSortKey(k)}
+                      onClick={() => handleSortClick(k)}
                       className={[
                         "rounded-lg px-2.5 py-1 text-[10px] uppercase tracking-wide",
                         sortKey === k
@@ -490,19 +652,136 @@ export default function ConversationsPage() {
                       ].join(" ")}
                     >
                       {k}
+                      {sortKey === k ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
                     </button>
                   ))}
                 </div>
               </div>
+
+              {filtersOpen && selectedProject && (
+                <div className="mt-3 flex flex-wrap items-end gap-4 rounded-lg border border-border bg-background p-3">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                      Score
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={filters.scoreStatus}
+                        onChange={(e) =>
+                          updateFilter("scoreStatus", e.target.value as ScoreFilter)
+                        }
+                        className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:border-accent focus:outline-none"
+                      >
+                        <option value="all">All</option>
+                        <option value="scored">Scored only</option>
+                        <option value="unscored">Unscored only</option>
+                      </select>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="Min"
+                        value={filters.minScore}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === "" || /^\d*\.?\d*$/.test(v)) {
+                            updateFilter("minScore", v);
+                          }
+                        }}
+                        className="w-14 rounded-lg border border-border bg-background px-2 py-1 text-xs tabular-nums focus:border-accent focus:outline-none"
+                      />
+                      <span className="text-xs text-muted">–</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="Max"
+                        value={filters.maxScore}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === "" || /^\d*\.?\d*$/.test(v)) {
+                            updateFilter("maxScore", v);
+                          }
+                        }}
+                        className="w-14 rounded-lg border border-border bg-background px-2 py-1 text-xs tabular-nums focus:border-accent focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                      User messages
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="Min"
+                        value={filters.minUserMsgs}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === "" || /^\d+$/.test(v)) {
+                            updateFilter("minUserMsgs", v);
+                          }
+                        }}
+                        className="w-16 rounded-lg border border-border bg-background px-2 py-1 text-xs tabular-nums focus:border-accent focus:outline-none"
+                      />
+                      <span className="text-xs text-muted">–</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="Max"
+                        value={filters.maxUserMsgs}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === "" || /^\d+$/.test(v)) {
+                            updateFilter("maxUserMsgs", v);
+                          }
+                        }}
+                        className="w-16 rounded-lg border border-border bg-background px-2 py-1 text-xs tabular-nums focus:border-accent focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                      Date
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="date"
+                        value={filters.dateFrom}
+                        onChange={(e) => updateFilter("dateFrom", e.target.value)}
+                        className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:border-accent focus:outline-none"
+                      />
+                      <span className="text-xs text-muted">–</span>
+                      <input
+                        type="date"
+                        value={filters.dateTo}
+                        onChange={(e) => updateFilter("dateTo", e.target.value)}
+                        className="rounded-lg border border-border bg-background px-2 py-1 text-xs focus:border-accent focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {filtersActive && (
+                    <button
+                      type="button"
+                      onClick={() => setFilters(DEFAULT_FILTERS)}
+                      className="rounded-lg px-2.5 py-1 text-xs text-muted hover:text-foreground"
+                    >
+                      Clear filters
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
-            {topThree.length > 0 && (
+            {displayedTopThree.length > 0 && (
               <div className="border-b border-border bg-muted/20 px-4 py-4">
                 <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted">
                   Top 3 in this folder
                 </p>
                 <div className="flex flex-wrap gap-3">
-                  {topThree.map((conv, idx) => (
+                  {displayedTopThree.map((conv, idx) => (
                     <TopConversationCard
                       key={conv.id}
                       rank={idx + 1}
@@ -537,8 +816,8 @@ export default function ConversationsPage() {
                 </p>
               ) : projectConversations.length === 0 ? (
                 <p className="px-4 py-12 text-center text-sm text-muted">
-                  {search
-                    ? `No conversations matching "${search}"`
+                  {search || filtersActive
+                    ? "No conversations match your search or filters."
                     : "No conversations in this project."}
                 </p>
               ) : (

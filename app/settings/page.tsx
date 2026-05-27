@@ -304,13 +304,6 @@ export default function SettingsPage() {
               placeholder="gpt-4.1-mini"
             />
           </FieldRow>
-          <FieldRow label="Embedding Deployment">
-            <TextInput
-              value={settings.embeddingModel}
-              onChange={(v) => update("embeddingModel", v)}
-              placeholder="text-embedding-3-small"
-            />
-          </FieldRow>
         </section>
 
         {/* ── Transcript Sources ── */}

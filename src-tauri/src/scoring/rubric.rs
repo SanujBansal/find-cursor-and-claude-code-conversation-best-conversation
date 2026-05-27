@@ -1,66 +1,77 @@
 use serde::{Deserialize, Serialize};
 
-pub const RUBRIC_VERSION: &str = "v2";
+pub const RUBRIC_VERSION: &str = "v3";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RubricWeights {
-    pub task_completion: f64,
-    pub technical_correctness: f64,
-    pub workflow_quality: f64,
-    pub tool_use_and_context: f64,
-    pub communication_clarity: f64,
-    pub learning_leverage: f64,
+    pub conceptual_knowledge: f64,
+    pub attention_to_detail: f64,
+    pub problem_decomposition: f64,
+    pub critical_evaluation: f64,
+    pub robustness_awareness: f64,
+    pub debugging_skill: f64,
+    pub prompt_specificity: f64,
+    pub scope_discipline: f64,
 }
 
 pub const DEFAULT_WEIGHTS: RubricWeights = RubricWeights {
-    task_completion: 0.30,
-    technical_correctness: 0.20,
-    workflow_quality: 0.15,
-    tool_use_and_context: 0.15,
-    communication_clarity: 0.10,
-    learning_leverage: 0.10,
+    conceptual_knowledge: 0.18,
+    attention_to_detail: 0.15,
+    problem_decomposition: 0.13,
+    critical_evaluation: 0.12,
+    robustness_awareness: 0.12,
+    debugging_skill: 0.10,
+    prompt_specificity: 0.10,
+    scope_discipline: 0.10,
 };
 
-/// Shared dimension scores (0-5 scale). Defined here so both `rubric` and
-/// `scorer` can reference the same type without circular imports.
+/// Per-dimension hiring scores for a single transcript (0-5 scale).
+/// Defined here so both `rubric` and `scorer` can reference the same type
+/// without a circular import. Each dimension grades the human DEVELOPER's
+/// behavior in the transcript — not the AI assistant's output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RubricDimensions {
-    pub task_completion: f64,
-    pub technical_correctness: f64,
-    pub workflow_quality: f64,
-    pub tool_use_and_context: f64,
-    pub communication_clarity: f64,
-    pub learning_leverage: f64,
+    pub conceptual_knowledge: f64,
+    pub attention_to_detail: f64,
+    pub problem_decomposition: f64,
+    pub critical_evaluation: f64,
+    pub robustness_awareness: f64,
+    pub debugging_skill: f64,
+    pub prompt_specificity: f64,
+    pub scope_discipline: f64,
 }
 
 /// Compute the final score using a weighted arithmetic mean with a
-/// "weakest-link" penalty. The penalty exists because a conversation that
-/// is great on most axes but mediocre on one should NOT round to a perfect
-/// 5 — a single weak dimension drags the headline number down.
+/// "weakest-link" penalty. The penalty exists because a candidate who is
+/// great on most axes but mediocre on one should NOT round to a perfect 5
+/// — a single weak hiring signal drags the headline number down.
 ///
 /// Penalty: subtract `0.4 * max(0, 4 - min_dim)`.
 ///   - all 5s → penalty 0  → final 5.00
 ///   - all 4s → penalty 0  → final 4.00
-///   - mostly 5s, one 3   → penalty 0.4 → top-end ~4.3
-///   - mostly 5s, one 2   → penalty 0.8 → top-end ~3.7
+///   - mostly 5s, one 2   → penalty 0.8 → top-end ~3.75 (varies by weight)
 ///   - mostly 5s, one 0   → penalty 1.6 → top-end ~2.9
 ///   - all 0s             → 0.0 (clamped)
 pub fn compute_final_score(dims: &RubricDimensions) -> f64 {
-    let weighted = dims.task_completion * DEFAULT_WEIGHTS.task_completion
-        + dims.technical_correctness * DEFAULT_WEIGHTS.technical_correctness
-        + dims.workflow_quality * DEFAULT_WEIGHTS.workflow_quality
-        + dims.tool_use_and_context * DEFAULT_WEIGHTS.tool_use_and_context
-        + dims.communication_clarity * DEFAULT_WEIGHTS.communication_clarity
-        + dims.learning_leverage * DEFAULT_WEIGHTS.learning_leverage;
+    let weighted = dims.conceptual_knowledge * DEFAULT_WEIGHTS.conceptual_knowledge
+        + dims.attention_to_detail * DEFAULT_WEIGHTS.attention_to_detail
+        + dims.problem_decomposition * DEFAULT_WEIGHTS.problem_decomposition
+        + dims.critical_evaluation * DEFAULT_WEIGHTS.critical_evaluation
+        + dims.robustness_awareness * DEFAULT_WEIGHTS.robustness_awareness
+        + dims.debugging_skill * DEFAULT_WEIGHTS.debugging_skill
+        + dims.prompt_specificity * DEFAULT_WEIGHTS.prompt_specificity
+        + dims.scope_discipline * DEFAULT_WEIGHTS.scope_discipline;
 
     let min_dim = [
-        dims.task_completion,
-        dims.technical_correctness,
-        dims.workflow_quality,
-        dims.tool_use_and_context,
-        dims.communication_clarity,
-        dims.learning_leverage,
+        dims.conceptual_knowledge,
+        dims.attention_to_detail,
+        dims.problem_decomposition,
+        dims.critical_evaluation,
+        dims.robustness_awareness,
+        dims.debugging_skill,
+        dims.prompt_specificity,
+        dims.scope_discipline,
     ]
     .into_iter()
     .fold(f64::INFINITY, f64::min);
@@ -75,12 +86,14 @@ mod tests {
 
     fn dims_all(value: f64) -> RubricDimensions {
         RubricDimensions {
-            task_completion: value,
-            technical_correctness: value,
-            workflow_quality: value,
-            tool_use_and_context: value,
-            communication_clarity: value,
-            learning_leverage: value,
+            conceptual_knowledge: value,
+            attention_to_detail: value,
+            problem_decomposition: value,
+            critical_evaluation: value,
+            robustness_awareness: value,
+            debugging_skill: value,
+            prompt_specificity: value,
+            scope_discipline: value,
         }
     }
 
@@ -104,42 +117,53 @@ mod tests {
 
     #[test]
     fn weakest_link_penalty_applies() {
-        // Mostly 5s with one workflow_quality=2 should land well below 4.7.
+        // All 5s with one attention_to_detail=2: weighted_avg = 5 - 3*0.15 = 4.55,
+        // penalty = 0.4 * (4-2) = 0.8, final = 3.75.
         let dims = RubricDimensions {
-            task_completion: 5.0,
-            technical_correctness: 5.0,
-            workflow_quality: 2.0,
-            tool_use_and_context: 5.0,
-            communication_clarity: 5.0,
-            learning_leverage: 5.0,
+            conceptual_knowledge: 5.0,
+            attention_to_detail: 2.0,
+            problem_decomposition: 5.0,
+            critical_evaluation: 5.0,
+            robustness_awareness: 5.0,
+            debugging_skill: 5.0,
+            prompt_specificity: 5.0,
+            scope_discipline: 5.0,
         };
         let score = compute_final_score(&dims);
-        // weighted_avg = 4.55, penalty = 0.4 * 2 = 0.8 → 3.75
-        assert!(score < 4.0, "weak workflow should pull final below 4.0, got {}", score);
-        assert!((score - 3.75).abs() < 0.01);
+        assert!(score < 4.0, "weak attention should pull final below 4.0, got {}", score);
+        assert!((score - 3.75).abs() < 0.01, "expected 3.75, got {}", score);
     }
 
     #[test]
     fn single_zero_dimension_caps_top_end() {
-        // All 5s except learning_leverage = 0 should NOT score above ~3.
+        // All 5s except scope_discipline = 0:
+        // weighted = 5 - 5*0.10 = 4.5, penalty = 0.4*4 = 1.6, final = 2.9.
         let dims = RubricDimensions {
-            task_completion: 5.0,
-            technical_correctness: 5.0,
-            workflow_quality: 5.0,
-            tool_use_and_context: 5.0,
-            communication_clarity: 5.0,
-            learning_leverage: 0.0,
+            conceptual_knowledge: 5.0,
+            attention_to_detail: 5.0,
+            problem_decomposition: 5.0,
+            critical_evaluation: 5.0,
+            robustness_awareness: 5.0,
+            debugging_skill: 5.0,
+            prompt_specificity: 5.0,
+            scope_discipline: 0.0,
         };
         let score = compute_final_score(&dims);
-        // weighted_avg = 4.5, penalty = 1.6 → 2.9
         assert!(score < 3.5, "a 0 dim should keep final below 3.5, got {}", score);
+        assert!((score - 2.9).abs() < 0.01, "expected ~2.9, got {}", score);
     }
 
     #[test]
     fn weights_sum_to_one() {
         let w = &DEFAULT_WEIGHTS;
-        let sum = w.task_completion + w.technical_correctness + w.workflow_quality
-            + w.tool_use_and_context + w.communication_clarity + w.learning_leverage;
+        let sum = w.conceptual_knowledge
+            + w.attention_to_detail
+            + w.problem_decomposition
+            + w.critical_evaluation
+            + w.robustness_awareness
+            + w.debugging_skill
+            + w.prompt_specificity
+            + w.scope_discipline;
         assert!((sum - 1.0).abs() < 0.001, "weights must sum to 1.0, got {}", sum);
     }
 }

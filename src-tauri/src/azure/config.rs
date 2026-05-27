@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT_API_VERSION: &str = "2024-02-15-preview";
 pub const DEFAULT_CHAT_DEPLOYMENT: &str = "gpt-4.1-mini";
-pub const DEFAULT_EMBEDDING_DEPLOYMENT: &str = "text-embedding-3-small";
 
 #[derive(Debug, Clone)]
 pub struct AzureOpenAIConfig {
@@ -10,7 +9,6 @@ pub struct AzureOpenAIConfig {
     pub api_key: String,
     pub api_version: String,
     pub chat_deployment: String,
-    pub embedding_deployment: String,
 }
 
 impl AzureOpenAIConfig {
@@ -33,18 +31,12 @@ impl AzureOpenAIConfig {
             "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME",
         ])
         .unwrap_or_else(|| DEFAULT_CHAT_DEPLOYMENT.to_string());
-        let embedding_deployment = optional_env(&[
-            "AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME",
-            "AZURE_OPENAI_EMBEDDING_DEPLOYMENT",
-        ])
-        .unwrap_or_else(|| DEFAULT_EMBEDDING_DEPLOYMENT.to_string());
 
         let config = Self {
             endpoint: normalize_endpoint(&endpoint),
             api_key,
             api_version,
             chat_deployment,
-            embedding_deployment,
         };
         config.validate()?;
         Ok(config)
@@ -58,13 +50,6 @@ impl AzureOpenAIConfig {
             return Err("Azure OpenAI API key is empty".to_string());
         }
         Ok(())
-    }
-
-    pub fn embeddings_url(&self, deployment: &str) -> String {
-        format!(
-            "{}/openai/deployments/{}/embeddings?api-version={}",
-            self.endpoint, deployment, self.api_version
-        )
     }
 
     pub fn chat_completions_url(&self, deployment: &str) -> String {

@@ -72,26 +72,6 @@ CREATE TABLE IF NOT EXISTS scores (
   created_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS conversation_chunks (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-  chunk_index INTEGER NOT NULL,
-  content TEXT NOT NULL,
-  token_estimate INTEGER,
-  content_hash TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  UNIQUE(conversation_id, chunk_index)
-);
-
-CREATE TABLE IF NOT EXISTS chunk_embeddings (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  chunk_id INTEGER NOT NULL UNIQUE REFERENCES conversation_chunks(id) ON DELETE CASCADE,
-  model_id TEXT NOT NULL,
-  dimensions INTEGER NOT NULL,
-  embedding BLOB NOT NULL,
-  created_at TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS daily_scores (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   score_date TEXT NOT NULL UNIQUE,
@@ -109,23 +89,10 @@ CREATE TABLE IF NOT EXISTS weekly_scores (
   computed_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS learning_suggestions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  rubric_dimension TEXT NOT NULL,
-  concept TEXT NOT NULL,
-  rationale TEXT NOT NULL,
-  evidence_conversation_ids TEXT,
-  period_start TEXT,
-  period_end TEXT,
-  generated_at TEXT NOT NULL,
-  dismissed INTEGER NOT NULL DEFAULT 0 CHECK (dismissed IN (0, 1)),
-  created_at TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_type TEXT NOT NULL CHECK (
-    job_type IN ('import', 'score', 'embed', 'aggregate', 'suggest')
+    job_type IN ('import', 'score', 'aggregate')
   ),
   status TEXT NOT NULL CHECK (
     status IN ('pending', 'running', 'completed', 'failed')

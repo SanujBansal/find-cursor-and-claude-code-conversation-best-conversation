@@ -1,23 +1,19 @@
 use crate::{
     analytics::aggregates::{compute_weekly_score, effort_weight, weighted_average},
-    azure::{chat_completion, normalize_endpoint, AzureOpenAIConfig, DEFAULT_API_VERSION, DEFAULT_CHAT_DEPLOYMENT},
+    azure::{normalize_endpoint, AzureOpenAIConfig, DEFAULT_API_VERSION, DEFAULT_CHAT_DEPLOYMENT},
     db::Database,
-    embeddings::{
-        chunker::chunk_messages,
-        embedder::{bytes_to_embedding, embed_texts, embedding_to_bytes, DEFAULT_EMBEDDING_MODEL},
-    },
     importers::{
         self,
         types::{ImportResult, JobStatus},
+    },
+    rules::{
+        scan_project_rules as scanner_scan, score_project_rules_with_llm, ProjectRulesReport,
+        ProjectRulesScore, PROJECT_RULES_RUBRIC_VERSION,
     },
     scoring::{
         prompt::PROMPT_VERSION,
         rubric::RUBRIC_VERSION,
         scorer::{ConversationForScoring, ScoringResult},
-    },
-    search::retriever::{rank_chunks, ChunkRecord},
-    suggestions::generator::{
-        call_openai_suggestions, collect_weak_dimensions, store_suggestions, LearningSuggestion,
     },
 };
 use chrono::{Datelike, Duration, NaiveDate, Utc};
@@ -35,7 +31,6 @@ pub struct AppSettings {
     /// Azure OpenAI API key override (falls back to `.env`).
     pub openai_api_key: String,
     pub scoring_model: String,
-    pub embedding_model: String,
     pub cursor_data_path: String,
     pub claude_code_path: String,
     pub claude_markdown_path: String,
@@ -51,7 +46,6 @@ impl Default for AppSettings {
             azure_endpoint: String::new(),
             openai_api_key: String::new(),
             scoring_model: "gpt-4.1-mini".to_string(),
-            embedding_model: DEFAULT_EMBEDDING_MODEL.to_string(),
             cursor_data_path: String::new(),
             claude_code_path: String::new(),
             claude_markdown_path: String::new(),
@@ -419,9 +413,6 @@ fn enrich_settings_from_azure(mut settings: AppSettings) -> AppSettings {
         if settings.scoring_model.is_empty() {
             settings.scoring_model = config.chat_deployment.clone();
         }
-        if settings.embedding_model.is_empty() {
-            settings.embedding_model = config.embedding_deployment.clone();
-        }
     }
 
     settings.azure_configured = azure_credentials_available(&settings, env_config.as_ref());
@@ -446,7 +437,6 @@ fn resolve_azure_config(
     db: &Database,
     api_key_override: &str,
     chat_deployment: Option<String>,
-    embedding_deployment: Option<String>,
 ) -> Result<AzureOpenAIConfig, String> {
     let settings = read_settings(db)?;
     let mut config = AzureOpenAIConfig::load().unwrap_or_else(|_| AzureOpenAIConfig {
@@ -454,7 +444,6 @@ fn resolve_azure_config(
         api_key: String::new(),
         api_version: DEFAULT_API_VERSION.to_string(),
         chat_deployment: DEFAULT_CHAT_DEPLOYMENT.to_string(),
-        embedding_deployment: DEFAULT_EMBEDDING_MODEL.to_string(),
     });
 
     if !settings.azure_endpoint.trim().is_empty() {
@@ -478,9 +467,6 @@ fn resolve_azure_config(
             (!from_settings.is_empty()).then(|| from_settings.to_string())
         })
         .unwrap_or(env_chat_deployment);
-    config.embedding_deployment = embedding_deployment
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(settings.embedding_model);
 
     config.validate()?;
     Ok(config)
@@ -807,7 +793,7 @@ pub fn get_import_status(
             .prepare(
                 "SELECT id, job_type, status, progress, error_message, created_at, updated_at
                  FROM jobs
-                 WHERE job_type IN ('import', 'embed')
+                 WHERE job_type = 'import'
                  ORDER BY created_at DESC
                  LIMIT 50",
             )
@@ -869,11 +855,8 @@ pub async fn clear_all_transcripts(db: tauri::State<'_, Database>) -> Result<(),
 
 fn clear_transcript_tables(conn: &rusqlite::Connection) -> Result<(), String> {
     conn.execute_batch(
-        "DELETE FROM chunk_embeddings;
-         DELETE FROM conversation_chunks;
-         DELETE FROM scores;
+        "DELETE FROM scores;
          DELETE FROM messages;
-         DELETE FROM learning_suggestions;
          DELETE FROM daily_scores;
          DELETE FROM weekly_scores;
          DELETE FROM jobs;
@@ -1045,7 +1028,7 @@ pub async fn import_all_and_score(
 
     let (cleared, cursor, claude_code, claude_markdown) = import_results;
 
-    let config = resolve_azure_config(&db, &api_key, scoring_model, None)?;
+    let config = resolve_azure_config(&db, &api_key, scoring_model)?;
     let deployment = config.chat_deployment.clone();
     let pending = fetch_conversations_for_scoring(&db, None, None, None)?;
 
@@ -1187,7 +1170,6 @@ fn upsert_conversations(
                 .map_err(|e| e.to_string())?;
 
                 insert_messages(conn, existing_row_id, &conv.messages, &now)?;
-                queue_embed_job(conn, existing_row_id, &now)?;
                 imported += 1;
             } else {
                 // New conversation
@@ -1223,7 +1205,6 @@ fn upsert_conversations(
 
                 let row_id = conn.last_insert_rowid();
                 insert_messages(conn, row_id, &conv.messages, &now)?;
-                queue_embed_job(conn, row_id, &now)?;
                 imported += 1;
             }
 
@@ -1284,402 +1265,6 @@ fn insert_messages(
         .map_err(|e| e.to_string())?;
     }
     Ok(())
-}
-
-fn queue_embed_job(
-    conn: &rusqlite::Connection,
-    conversation_id: i64,
-    now: &str,
-) -> Result<(), String> {
-    let payload = serde_json::json!({ "conversation_id": conversation_id }).to_string();
-    conn.execute(
-        "INSERT INTO jobs (job_type, status, payload, progress, created_at, updated_at)
-         VALUES ('embed', 'pending', ?1, 0, ?2, ?3)",
-        params![payload, now, now],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-// ── Vector search / embedding structs ────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EmbedResult {
-    pub embedded: usize,
-    pub chunks_created: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SearchResult {
-    pub conversation_id: String,
-    pub conversation_title: String,
-    pub project_path: Option<String>,
-    pub chunk_text: String,
-    pub similarity: f32,
-    pub source_type: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatSearchResponse {
-    pub answer: String,
-    pub sources: Vec<SearchResult>,
-}
-
-// ── embed_pending ─────────────────────────────────────────────────────────────
-
-#[tauri::command]
-pub async fn embed_pending(
-    db: tauri::State<'_, Database>,
-    api_key: String,
-    embedding_model: Option<String>,
-) -> Result<EmbedResult, String> {
-    let config = resolve_azure_config(&db, &api_key, None, embedding_model)?;
-    let deployment = config.embedding_deployment.clone();
-    // 1. Read pending jobs and conversation messages from DB (synchronous)
-    struct PendingJob {
-        job_id: i64,
-        conversation_id: i64,
-    }
-
-    struct ConvRow {
-        db_id: i64,
-        messages: Vec<(String, String)>, // (role, content)
-    }
-
-    let pending_jobs: Vec<PendingJob> = db.with_connection(|conn| {
-        let mut stmt = conn
-            .prepare(
-                "SELECT id, payload FROM jobs
-                 WHERE job_type = 'embed' AND status = 'pending'
-                 ORDER BY created_at ASC",
-            )
-            .map_err(|e| e.to_string())?;
-
-        let jobs = stmt
-            .query_map([], |row| {
-                let id: i64 = row.get(0)?;
-                let payload: String = row.get(1)?;
-                Ok((id, payload))
-            })
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-
-        let mut result = Vec::new();
-        for (job_id, payload) in jobs {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&payload) {
-                if let Some(conv_id) = val.get("conversation_id").and_then(|v| v.as_i64()) {
-                    result.push(PendingJob {
-                        job_id,
-                        conversation_id: conv_id,
-                    });
-                }
-            }
-        }
-        Ok(result)
-    })?;
-
-    if pending_jobs.is_empty() {
-        return Ok(EmbedResult {
-            embedded: 0,
-            chunks_created: 0,
-        });
-    }
-
-    // Deduplicate by conversation_id (keep last job per conversation)
-    let mut seen_conv_ids = std::collections::HashMap::<i64, i64>::new();
-    for job in &pending_jobs {
-        seen_conv_ids.insert(job.conversation_id, job.job_id);
-    }
-
-    // Fetch messages for each unique conversation
-    let mut conv_rows: Vec<ConvRow> = Vec::new();
-    for (&conv_db_id, _) in &seen_conv_ids {
-        let messages = db.with_connection(|conn| {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT role, content FROM messages
-                     WHERE conversation_id = ?1
-                     ORDER BY sequence_num ASC",
-                )
-                .map_err(|e| e.to_string())?;
-
-            let rows = stmt
-                .query_map([conv_db_id], |row| Ok((row.get(0)?, row.get(1)?)))
-                .map_err(|e| e.to_string())?
-                .collect::<Result<Vec<(String, String)>, _>>()
-                .map_err(|e| e.to_string())?;
-            Ok(rows)
-        })?;
-
-        conv_rows.push(ConvRow {
-            db_id: conv_db_id,
-            messages,
-        });
-    }
-
-    // 2. Chunk conversations and determine which chunks need embeddings
-    struct ChunkToEmbed {
-        text: String,
-        db_chunk_id: Option<i64>, // Some if already in DB, None if new
-    }
-
-    let mut total_chunks_created: usize = 0;
-    let mut chunks_to_embed: Vec<ChunkToEmbed> = Vec::new();
-
-    let now = Utc::now().to_rfc3339();
-
-    for conv in &conv_rows {
-        let id_str = conv.db_id.to_string();
-        let chunks = chunk_messages(&id_str, &conv.messages);
-
-        for chunk in &chunks {
-            let token_estimate = (chunk.text.chars().count() / 4) as i64;
-
-            // Upsert chunk into conversation_chunks
-            let db_chunk_id: i64 = db.with_connection(|conn| {
-                // Check existing chunk
-                let existing: Option<(i64, String)> = conn
-                    .query_row(
-                        "SELECT id, content_hash FROM conversation_chunks
-                         WHERE conversation_id = ?1 AND chunk_index = ?2",
-                        params![conv.db_id, chunk.chunk_index as i64],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )
-                    .optional()
-                    .map_err(|e| e.to_string())?;
-
-                match existing {
-                    Some((cid, existing_hash)) if existing_hash == chunk.id => Ok(cid),
-                    Some((cid, _)) => {
-                        // Content changed — update chunk and delete stale embedding
-                        conn.execute(
-                            "UPDATE conversation_chunks
-                             SET content = ?1, token_estimate = ?2, content_hash = ?3
-                             WHERE id = ?4",
-                            params![chunk.text, token_estimate, chunk.id, cid],
-                        )
-                        .map_err(|e| e.to_string())?;
-
-                        conn.execute(
-                            "DELETE FROM chunk_embeddings WHERE chunk_id = ?1",
-                            [cid],
-                        )
-                        .map_err(|e| e.to_string())?;
-
-                        Ok(cid)
-                    }
-                    None => {
-                        // New chunk
-                        conn.execute(
-                            "INSERT INTO conversation_chunks
-                                (conversation_id, chunk_index, content, token_estimate, content_hash, created_at)
-                             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                            params![
-                                conv.db_id,
-                                chunk.chunk_index as i64,
-                                chunk.text,
-                                token_estimate,
-                                chunk.id,
-                                now,
-                            ],
-                        )
-                        .map_err(|e| e.to_string())?;
-
-                        total_chunks_created += 1;
-                        Ok(conn.last_insert_rowid())
-                    }
-                }
-            })?;
-
-            // Check if this chunk already has an up-to-date embedding
-            let has_embedding: bool = db.with_connection(|conn| {
-                conn.query_row(
-                    "SELECT 1 FROM chunk_embeddings WHERE chunk_id = ?1",
-                    [db_chunk_id],
-                    |_| Ok(true),
-                )
-                .optional()
-                .map(|opt| opt.unwrap_or(false))
-                .map_err(|e| e.to_string())
-            })?;
-
-            if !has_embedding {
-                chunks_to_embed.push(ChunkToEmbed {
-                    text: chunk.text.clone(),
-                    db_chunk_id: Some(db_chunk_id),
-                });
-            }
-        }
-    }
-
-    // 3. Call OpenAI for chunks that need embeddings
-    if !chunks_to_embed.is_empty() {
-        let texts: Vec<String> = chunks_to_embed.iter().map(|c| c.text.clone()).collect();
-        let embeddings = embed_texts(&config, &texts, &deployment).await?;
-
-        // 4. Store embeddings
-        for (chunk, embedding) in chunks_to_embed.iter().zip(embeddings.iter()) {
-            if let Some(db_chunk_id) = chunk.db_chunk_id {
-                let blob = embedding_to_bytes(embedding);
-                db.with_connection(|conn| {
-                    conn.execute(
-                        "INSERT INTO chunk_embeddings
-                            (chunk_id, model_id, dimensions, embedding, created_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5)
-                         ON CONFLICT(chunk_id) DO UPDATE SET
-                            model_id = excluded.model_id,
-                            dimensions = excluded.dimensions,
-                            embedding = excluded.embedding",
-                        params![
-                            db_chunk_id,
-                            &deployment,
-                            embedding.len() as i64,
-                            blob,
-                            now,
-                        ],
-                    )
-                    .map_err(|e| e.to_string())?;
-                    Ok(())
-                })?;
-            }
-        }
-    }
-
-    // 5. Mark all pending embed jobs as completed
-    let all_job_ids: Vec<i64> = pending_jobs.iter().map(|j| j.job_id).collect();
-    db.with_connection(|conn| {
-        for job_id in &all_job_ids {
-            conn.execute(
-                "UPDATE jobs
-                 SET status = 'completed', progress = 1.0, completed_at = ?1, updated_at = ?2
-                 WHERE id = ?3",
-                params![now, now, job_id],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    })?;
-
-    Ok(EmbedResult {
-        embedded: seen_conv_ids.len(),
-        chunks_created: total_chunks_created,
-    })
-}
-
-// ── search_conversations ──────────────────────────────────────────────────────
-
-#[tauri::command]
-pub async fn search_conversations(
-    db: tauri::State<'_, Database>,
-    query: String,
-    api_key: String,
-    limit: Option<i64>,
-    embedding_model: Option<String>,
-) -> Result<Vec<SearchResult>, String> {
-    let config = resolve_azure_config(&db, &api_key, None, embedding_model)?;
-    let deployment = config.embedding_deployment.clone();
-    let top_k = limit.unwrap_or(10) as usize;
-
-    // 1. Embed the query
-    let query_embeddings = embed_texts(&config, &[query], &deployment).await?;
-    let query_embedding = query_embeddings
-        .into_iter()
-        .next()
-        .ok_or_else(|| "No embedding returned for query".to_string())?;
-
-    // 2. Load all chunk embeddings from DB
-    let records = load_chunk_records(&db)?;
-
-    // 3. Rank by cosine similarity
-    let ranked = rank_chunks(&records, &query_embedding, top_k);
-
-    let results = ranked
-        .into_iter()
-        .map(|r| SearchResult {
-            conversation_id: r.conversation_db_id.to_string(),
-            conversation_title: r.conversation_title,
-            project_path: r.project_path,
-            chunk_text: r.chunk_text,
-            similarity: r.similarity,
-            source_type: r.source_type,
-        })
-        .collect();
-
-    Ok(results)
-}
-
-// ── chat_search ───────────────────────────────────────────────────────────────
-
-#[tauri::command]
-pub async fn chat_search(
-    db: tauri::State<'_, Database>,
-    query: String,
-    api_key: String,
-    embedding_model: Option<String>,
-    chat_model: Option<String>,
-) -> Result<ChatSearchResponse, String> {
-    let config = resolve_azure_config(
-        &db,
-        &api_key,
-        chat_model.clone(),
-        embedding_model.clone(),
-    )?;
-    let embed_deployment = config.embedding_deployment.clone();
-    let chat_deployment = config.chat_deployment.clone();
-
-    // 1. Embed query and retrieve top 5 chunks
-    let query_embeddings = embed_texts(&config, &[query.clone()], &embed_deployment).await?;
-    let query_embedding = query_embeddings
-        .into_iter()
-        .next()
-        .ok_or_else(|| "No embedding returned for query".to_string())?;
-
-    let records = load_chunk_records(&db)?;
-    let ranked = rank_chunks(&records, &query_embedding, 5);
-
-    if ranked.is_empty() {
-        return Ok(ChatSearchResponse {
-            answer: "No relevant transcripts found. Try importing some conversations first.".to_string(),
-            sources: Vec::new(),
-        });
-    }
-
-    // 2. Build context from top chunks
-    let context_text = ranked
-        .iter()
-        .enumerate()
-        .map(|(i, r)| {
-            format!(
-                "[Chunk {}] Conversation ID: {} | Title: {}\n{}",
-                i + 1,
-                r.conversation_db_id,
-                r.conversation_title,
-                r.chunk_text
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n");
-
-    // 3. Call OpenAI chat completions
-    let answer = call_chat_completion(&config, &chat_deployment, &query, &context_text).await?;
-
-    let sources = ranked
-        .into_iter()
-        .map(|r| SearchResult {
-            conversation_id: r.conversation_db_id.to_string(),
-            conversation_title: r.conversation_title,
-            project_path: r.project_path,
-            chunk_text: r.chunk_text,
-            similarity: r.similarity,
-            source_type: r.source_type,
-        })
-        .collect();
-
-    Ok(ChatSearchResponse { answer, sources })
 }
 
 // ── Scoring commands ──────────────────────────────────────────────────────────
@@ -1750,7 +1335,7 @@ pub async fn score_project(
     model_id: Option<String>,
     min_user_messages: Option<i64>,
 ) -> Result<Vec<ScoringResult>, String> {
-    let config = resolve_azure_config(&db, &api_key, model_id, None)?;
+    let config = resolve_azure_config(&db, &api_key, model_id)?;
     let deployment = config.chat_deployment.clone();
     let pending =
         fetch_conversations_for_scoring(&db, None, Some(&project_path), min_user_messages)?;
@@ -1857,7 +1442,7 @@ pub async fn score_pending(
     api_key: String,
     model_id: Option<String>,
 ) -> Result<Vec<ScoringResult>, String> {
-    let config = resolve_azure_config(&db, &api_key, model_id, None)?;
+    let config = resolve_azure_config(&db, &api_key, model_id)?;
     let deployment = config.chat_deployment.clone();
     let pending = fetch_conversations_for_scoring(&db, None, None, None)?;
 
@@ -1876,7 +1461,7 @@ pub async fn score_conversation(
     conversation_id: i64,
     model_id: Option<String>,
 ) -> Result<ScoringResult, String> {
-    let config = resolve_azure_config(&db, &api_key, model_id, None)?;
+    let config = resolve_azure_config(&db, &api_key, model_id)?;
     let deployment = config.chat_deployment.clone();
     let pending = fetch_conversations_for_scoring(&db, Some(conversation_id), None, None)?;
 
@@ -2362,6 +1947,166 @@ pub fn get_conversation_messages(
     })
 }
 
+// ── Project rules commands ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRulesView {
+    pub report: ProjectRulesReport,
+    pub score: Option<ProjectRulesScore>,
+    /// True when the stored score's `content_hash` no longer matches the
+    /// freshly-scanned report — i.e. the user changed their rule files
+    /// since the last grading.
+    pub stale: bool,
+}
+
+/// Scan a project directory for AI-instruction files and detect its tech
+/// stack. Pulls the most recent stored score (if any) and marks it `stale`
+/// when the rule files have changed since.
+#[tauri::command]
+pub async fn scan_project_rules(
+    db: tauri::State<'_, Database>,
+    project_path: String,
+) -> Result<ProjectRulesView, String> {
+    let path_clone = project_path.clone();
+    let report = tokio::task::spawn_blocking(move || scanner_scan(&path_clone))
+        .await
+        .map_err(|e| format!("scan_project_rules panicked: {e}"))?;
+
+    let score = read_project_rules_score(&db, &project_path)?;
+    let stale = match &score {
+        Some(s) => s.content_hash != report.content_hash
+            || s.rubric_version != PROJECT_RULES_RUBRIC_VERSION,
+        None => false,
+    };
+
+    Ok(ProjectRulesView {
+        report,
+        score,
+        stale,
+    })
+}
+
+/// Score the project's rule files against its detected tech stack using
+/// the configured Azure OpenAI deployment. Persists the result so future
+/// calls to `scan_project_rules` return it without a second LLM round-trip.
+#[tauri::command]
+pub async fn score_project_rules(
+    db: tauri::State<'_, Database>,
+    api_key: String,
+    project_path: String,
+    model_id: Option<String>,
+) -> Result<ProjectRulesScore, String> {
+    let config = resolve_azure_config(&db, &api_key, model_id)?;
+    let deployment = config.chat_deployment.clone();
+
+    let path_clone = project_path.clone();
+    let report = tokio::task::spawn_blocking(move || scanner_scan(&path_clone))
+        .await
+        .map_err(|e| format!("scan_project_rules panicked: {e}"))?;
+
+    let score = score_project_rules_with_llm(&report, &config, &deployment).await?;
+    persist_project_rules_score(&db, &report, &score)?;
+    Ok(score)
+}
+
+fn persist_project_rules_score(
+    db: &Database,
+    report: &ProjectRulesReport,
+    score: &ProjectRulesScore,
+) -> Result<(), String> {
+    let now = Utc::now().to_rfc3339();
+    let tech_stack_json =
+        serde_json::to_string(&report.tech_stack).map_err(|e| e.to_string())?;
+    let rule_files_json =
+        serde_json::to_string(&report.rule_files).map_err(|e| e.to_string())?;
+    let suggestions_json =
+        serde_json::to_string(&score.suggestions).map_err(|e| e.to_string())?;
+
+    db.with_connection(|conn| {
+        conn.execute(
+            "INSERT INTO project_rule_scores
+                (project_path, tech_stack_json, rule_files_json, content_hash,
+                 coverage, stack_alignment, specificity, actionability, overall_score,
+                 summary, suggestions_json, model_id, rubric_version, scored_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+             ON CONFLICT(project_path) DO UPDATE SET
+                tech_stack_json  = excluded.tech_stack_json,
+                rule_files_json  = excluded.rule_files_json,
+                content_hash     = excluded.content_hash,
+                coverage         = excluded.coverage,
+                stack_alignment  = excluded.stack_alignment,
+                specificity      = excluded.specificity,
+                actionability    = excluded.actionability,
+                overall_score    = excluded.overall_score,
+                summary          = excluded.summary,
+                suggestions_json = excluded.suggestions_json,
+                model_id         = excluded.model_id,
+                rubric_version   = excluded.rubric_version,
+                scored_at        = excluded.scored_at",
+            params![
+                score.project_path,
+                tech_stack_json,
+                rule_files_json,
+                score.content_hash,
+                score.coverage,
+                score.stack_alignment,
+                score.specificity,
+                score.actionability,
+                score.overall_score,
+                score.summary,
+                suggestions_json,
+                score.model_id,
+                score.rubric_version,
+                score.scored_at,
+                now,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    })
+}
+
+fn read_project_rules_score(
+    db: &Database,
+    project_path: &str,
+) -> Result<Option<ProjectRulesScore>, String> {
+    db.with_connection(|conn| {
+        let row = conn
+            .query_row(
+                "SELECT
+                    project_path, content_hash, coverage, stack_alignment, specificity,
+                    actionability, overall_score, summary, suggestions_json,
+                    model_id, rubric_version, scored_at
+                 FROM project_rule_scores
+                 WHERE project_path = ?1",
+                [project_path],
+                |row| {
+                    let suggestions_json: String = row.get(8)?;
+                    let suggestions: Vec<String> =
+                        serde_json::from_str(&suggestions_json).unwrap_or_default();
+                    Ok(ProjectRulesScore {
+                        project_path: row.get(0)?,
+                        content_hash: row.get(1)?,
+                        coverage: row.get(2)?,
+                        stack_alignment: row.get(3)?,
+                        specificity: row.get(4)?,
+                        actionability: row.get(5)?,
+                        overall_score: row.get(6)?,
+                        summary: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                        suggestions,
+                        model_id: row.get(9)?,
+                        rubric_version: row.get(10)?,
+                        scored_at: row.get(11)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        Ok(row)
+    })
+}
+
 // ── shared helpers ────────────────────────────────────────────────────────────
 
 fn display_project_name(
@@ -2378,172 +2123,4 @@ fn display_project_name(
             .map(|name| name.to_string_lossy().to_string())
             .filter(|name| !name.is_empty())
     })
-}
-
-fn load_chunk_records(db: &Database) -> Result<Vec<ChunkRecord>, String> {
-    db.with_connection(|conn| {
-        let mut stmt = conn
-            .prepare(
-                "SELECT
-                    cc.conversation_id,
-                    c.title,
-                    c.source_path,
-                    c.provider,
-                    cc.content,
-                    ce.embedding
-                 FROM chunk_embeddings ce
-                 JOIN conversation_chunks cc ON cc.id = ce.chunk_id
-                 JOIN conversations c ON c.id = cc.conversation_id",
-            )
-            .map_err(|e| e.to_string())?;
-
-        let records = stmt
-            .query_map([], |row| {
-                let blob: Vec<u8> = row.get(5)?;
-                Ok(ChunkRecord {
-                    conversation_db_id: row.get(0)?,
-                    conversation_title: row.get(1)?,
-                    project_path: row.get(2)?,
-                    source_type: row.get(3)?,
-                    chunk_text: row.get(4)?,
-                    embedding: bytes_to_embedding(&blob),
-                })
-            })
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-
-        Ok(records)
-    })
-}
-
-// ── Learning Suggestions commands ─────────────────────────────────────────────
-
-/// Generate new learning suggestions via OpenAI and persist them.
-#[tauri::command]
-pub async fn generate_suggestions(
-    db: tauri::State<'_, Database>,
-    api_key: String,
-    model_id: Option<String>,
-) -> Result<Vec<LearningSuggestion>, String> {
-    let config = resolve_azure_config(&db, &api_key, model_id, None)?;
-    let deployment = config.chat_deployment.clone();
-
-    // 1. Collect weak dimensions synchronously
-    let weak_dims = db.with_connection(|conn| collect_weak_dimensions(conn))?;
-
-    if weak_dims.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // 2. Call Azure OpenAI asynchronously
-    let raw = call_openai_suggestions(&config, &weak_dims, &deployment).await?;
-
-    // 3. Store and return
-    db.with_connection(|conn| store_suggestions(conn, raw))
-}
-
-/// Fetch stored suggestions (excluding dismissed ones by default).
-#[tauri::command]
-pub fn get_suggestions(
-    db: tauri::State<'_, Database>,
-    include_dismissed: Option<bool>,
-) -> Result<Vec<LearningSuggestion>, String> {
-    let show_dismissed = include_dismissed.unwrap_or(false);
-
-    db.with_connection(|conn| {
-        let sql = if show_dismissed {
-            "SELECT id, rubric_dimension, concept, rationale, priority, \
-                    example_conversation_id, generated_at, dismissed
-             FROM learning_suggestions
-             ORDER BY
-                CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
-                generated_at DESC"
-                .to_string()
-        } else {
-            "SELECT id, rubric_dimension, concept, rationale, priority, \
-                    example_conversation_id, generated_at, dismissed
-             FROM learning_suggestions
-             WHERE dismissed = 0
-             ORDER BY
-                CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
-                generated_at DESC"
-                .to_string()
-        };
-
-        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-
-        let rows = stmt
-            .query_map([], |row| {
-                Ok(LearningSuggestion {
-                    id: row.get::<_, i64>(0)?.to_string(),
-                    related_dimension: row.get(1)?,
-                    concept: row.get(2)?,
-                    why_it_helps: row.get(3)?,
-                    priority: row.get::<_, String>(4).unwrap_or_else(|_| "medium".to_string()),
-                    example_conversation_id: row.get(5)?,
-                    generated_at: row.get(6)?,
-                    is_dismissed: row.get::<_, i64>(7).map(|v| v != 0).unwrap_or(false),
-                })
-            })
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-
-        Ok(rows)
-    })
-}
-
-/// Mark a suggestion as dismissed.
-#[tauri::command]
-pub fn dismiss_suggestion(
-    db: tauri::State<'_, Database>,
-    id: String,
-) -> Result<(), String> {
-    let id_int: i64 = id
-        .parse()
-        .map_err(|_| format!("Invalid suggestion id: {id}"))?;
-
-    db.with_connection(|conn| {
-        conn.execute(
-            "UPDATE learning_suggestions SET dismissed = 1 WHERE id = ?1",
-            [id_int],
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(())
-    })
-}
-
-async fn call_chat_completion(
-    config: &AzureOpenAIConfig,
-    deployment: &str,
-    user_question: &str,
-    context: &str,
-) -> Result<String, String> {
-    use crate::azure::ChatMessage;
-
-    let system_prompt = "You are a search assistant for coding session transcripts. \
-        Use the provided context chunks to answer the user's question. \
-        Always cite the conversation ID and title when referencing a specific session.";
-
-    let user_content = format!(
-        "Context chunks from coding transcripts:\n\n{context}\n\n---\n\nQuestion: {user_question}"
-    );
-
-    chat_completion(
-        config,
-        deployment,
-        vec![
-            ChatMessage {
-                role: "system",
-                content: system_prompt.to_string(),
-            },
-            ChatMessage {
-                role: "user",
-                content: user_content,
-            },
-        ],
-        None,
-    )
-    .await
 }

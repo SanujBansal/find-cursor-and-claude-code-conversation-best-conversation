@@ -1,20 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
-  ChatSearchResponse,
   ConversationExportMarkdown,
   ConversationSummary,
   ConversationWithScore,
   DashboardData,
-  EmbedResult,
   ImportAllResult,
   ImportResult,
   JobStatusRecord,
-  LearningSuggestion,
   MessageRecord,
   ProjectGroup,
+  ProjectRulesScore,
+  ProjectRulesView,
   ScoreRecord,
-  SearchResult,
   ScoringResult,
   TrendPoint,
 } from "./types";
@@ -97,43 +95,6 @@ export async function getDefaultCursorPath(): Promise<string> {
   return invoke<string>("get_default_cursor_path");
 }
 
-export async function embedPending(
-  apiKey: string,
-  embeddingModel?: string,
-): Promise<EmbedResult> {
-  return invoke<EmbedResult>("embed_pending", {
-    apiKey,
-    embeddingModel: embeddingModel ?? null,
-  });
-}
-
-export async function searchConversations(
-  query: string,
-  apiKey: string,
-  limit?: number,
-  embeddingModel?: string,
-): Promise<SearchResult[]> {
-  return invoke<SearchResult[]>("search_conversations", {
-    query,
-    apiKey,
-    limit: limit ?? null,
-    embeddingModel: embeddingModel ?? null,
-  });
-}
-
-export async function chatSearch(
-  query: string,
-  apiKey: string,
-  options?: { embeddingModel?: string; chatModel?: string },
-): Promise<ChatSearchResponse> {
-  return invoke<ChatSearchResponse>("chat_search", {
-    query,
-    apiKey,
-    embeddingModel: options?.embeddingModel ?? null,
-    chatModel: options?.chatModel ?? null,
-  });
-}
-
 export async function scoreProject(
   apiKey: string,
   projectPath: string,
@@ -211,26 +172,6 @@ export async function getConversationMessages(conversationId: number): Promise<M
   return invoke<MessageRecord[]>("get_conversation_messages", { conversationId });
 }
 
-export async function generateSuggestions(
-  apiKey: string,
-  modelId?: string,
-): Promise<LearningSuggestion[]> {
-  return invoke<LearningSuggestion[]>("generate_suggestions", {
-    apiKey,
-    modelId: modelId ?? null,
-  });
-}
-
-export async function getSuggestions(includeDismissed?: boolean): Promise<LearningSuggestion[]> {
-  return invoke<LearningSuggestion[]>("get_suggestions", {
-    includeDismissed: includeDismissed ?? null,
-  });
-}
-
-export async function dismissSuggestion(id: string): Promise<void> {
-  return invoke("dismiss_suggestion", { id });
-}
-
 export async function refreshAnalytics(): Promise<void> {
   return invoke("refresh_analytics");
 }
@@ -241,4 +182,20 @@ export async function getTrendData(period: string): Promise<TrendPoint[]> {
 
 export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+export async function scanProjectRules(projectPath: string): Promise<ProjectRulesView> {
+  return invoke<ProjectRulesView>("scan_project_rules", { projectPath });
+}
+
+export async function scoreProjectRules(
+  apiKey: string,
+  projectPath: string,
+  modelId?: string,
+): Promise<ProjectRulesScore> {
+  return invoke<ProjectRulesScore>("score_project_rules", {
+    apiKey,
+    projectPath,
+    modelId: modelId ?? null,
+  });
 }

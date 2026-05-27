@@ -3,71 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use super::config::AzureOpenAIConfig;
 
-const EMBEDDING_BATCH_SIZE: usize = 20;
-
-#[derive(Serialize)]
-struct EmbeddingRequest<'a> {
-    input: &'a [String],
-}
-
-#[derive(Deserialize)]
-struct EmbeddingResponse {
-    data: Vec<EmbeddingData>,
-}
-
-#[derive(Deserialize)]
-struct EmbeddingData {
-    embedding: Vec<f32>,
-}
-
 #[derive(Serialize)]
 pub struct ChatMessage<'a> {
     pub role: &'a str,
     pub content: String,
-}
-
-pub async fn create_embeddings(
-    config: &AzureOpenAIConfig,
-    deployment: &str,
-    texts: &[String],
-) -> Result<Vec<Vec<f32>>, String> {
-    if texts.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let client = Client::new();
-    let url = config.embeddings_url(deployment);
-    let mut all_embeddings = Vec::with_capacity(texts.len());
-
-    for batch in texts.chunks(EMBEDDING_BATCH_SIZE) {
-        let request = EmbeddingRequest { input: batch };
-
-        let response = client
-            .post(&url)
-            .header("api-key", &config.api_key)
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
-            .await
-            .map_err(|error| format!("Azure embedding request failed: {error}"))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(format!("Azure embedding API error {status}: {body}"));
-        }
-
-        let parsed: EmbeddingResponse = response
-            .json()
-            .await
-            .map_err(|error| format!("Failed to parse Azure embedding response: {error}"))?;
-
-        for datum in parsed.data {
-            all_embeddings.push(datum.embedding);
-        }
-    }
-
-    Ok(all_embeddings)
 }
 
 pub async fn chat_completion(
