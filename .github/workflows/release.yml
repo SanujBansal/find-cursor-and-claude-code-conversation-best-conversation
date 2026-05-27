@@ -46,14 +46,15 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build and release
+      - name: Build app
         uses: tauri-apps/tauri-action@v0
+        id: tauri
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # ── Code signing (optional) ────────────────────────────────────────
           # Uncomment and add these secrets to your repo to produce a
           # notarized, Gatekeeper-approved DMG. Without them the app still
-          # works — users just need to right-click → Open on first launch.
+          # works — users just need to run the one-time fix below.
           #
           # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -73,7 +74,18 @@ jobs:
 
             1. Download `Vibe.Score_*_aarch64.dmg` (Apple Silicon) or `Vibe.Score_*_x64.dmg` (Intel).
             2. Open the DMG and drag **Vibe Score** into Applications.
-            3. On first launch macOS may block it — go to **System Settings → Privacy & Security → Open Anyway**.
+            3. If macOS says the app is "damaged", open Terminal and run:
+               ```
+               xattr -cr /Applications/Vibe\ Score.app
+               codesign --force --deep --sign - /Applications/Vibe\ Score.app
+               ```
+               Then launch the app normally.
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
+
+      - name: Ad-hoc sign the app bundle
+        run: |
+          APP=$(find src-tauri/target/${{ matrix.target }}/release/bundle/macos -name "*.app" | head -1)
+          echo "Signing: $APP"
+          codesign --force --deep --sign - "$APP"
