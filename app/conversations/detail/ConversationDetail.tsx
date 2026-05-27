@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Shell } from "@/components/Shell";
 import {
+  analyzeChatVibe,
   exportConversationMarkdown,
   getConversationMessages,
   getScores,
@@ -11,7 +12,7 @@ import {
   scoreConversation,
 } from "../../../src/lib/tauri";
 import { useTauriRuntime } from "../../../src/lib/useTauriRuntime";
-import type { MessageRecord, ScoreRecord } from "../../../src/lib/types";
+import type { MessageRecord, ScoreRecord, VibeImprovement } from "../../../src/lib/types";
 import { hasAiCredentials, getActiveApiKey } from "../../../src/lib/types";
 
 const DIMENSION_LABELS: Record<string, string> = {
@@ -182,6 +183,31 @@ function AssistantMessageBlock({
   );
 }
 
+// ── Improve the Vibe sub-components ──────────────────────────────────────────
+
+function VibeImprovementCard({ item }: { item: VibeImprovement }) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-panel-border">
+      <div className="flex items-start gap-2 bg-[#f87171]/6 px-3 py-2 border-b border-panel-border">
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#f87171]/20 text-[10px] font-bold text-[#f87171]">
+          {item.index}
+        </span>
+        <p className="text-[11px] text-muted leading-relaxed">{item.tip}</p>
+      </div>
+      <div className="grid grid-cols-1 divide-y divide-panel-border">
+        <div className="px-3 py-2">
+          <p className="mb-1 text-[9px] uppercase tracking-[0.14em] text-[#f87171] font-semibold">Original</p>
+          <p className="text-[11px] font-mono text-muted leading-relaxed whitespace-pre-wrap wrap-break-word">{item.badPrompt}</p>
+        </div>
+        <div className="px-3 py-2">
+          <p className="mb-1 text-[9px] uppercase tracking-[0.14em] text-emerald-500 font-semibold">Improved</p>
+          <p className="text-[11px] font-mono text-foreground leading-relaxed whitespace-pre-wrap wrap-break-word">{item.improvedPrompt}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ConversationDetail() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -197,6 +223,10 @@ export function ConversationDetail() {
   const [exporting, setExporting] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [vibeImprovements, setVibeImprovements] = useState<VibeImprovement[]>([]);
+  const [vibeAnalysing, setVibeAnalysing] = useState(false);
+  const [vibeAnalysed, setVibeAnalysed] = useState(false);
+  const [vibeError, setVibeError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -280,6 +310,32 @@ export function ConversationDetail() {
       setError(String(err));
     } finally {
       setScoring(false);
+    }
+  }
+
+  async function handleVibeAnalyse() {
+    if (!conversationId || vibeAnalysing) return;
+    setVibeAnalysing(true);
+    setVibeError(null);
+    setVibeImprovements([]);
+    setVibeAnalysed(false);
+    try {
+      const settings = await getSettings();
+      if (!hasAiCredentials(settings)) {
+        setVibeError("Configure AI credentials in Settings first.");
+        return;
+      }
+      const results = await analyzeChatVibe(
+        conversationId,
+        getActiveApiKey(settings),
+        settings.scoringModel || undefined,
+      );
+      setVibeImprovements(results);
+      setVibeAnalysed(true);
+    } catch (err) {
+      setVibeError(String(err));
+    } finally {
+      setVibeAnalysing(false);
     }
   }
 
@@ -459,6 +515,70 @@ export function ConversationDetail() {
                   >
                     {scoring ? "Scoring…" : "Score now"}
                   </button>
+                )}
+              </div>
+            )}
+
+            {/* ── Improve the Vibe ── */}
+            {isRuntime && messages.length > 0 && (
+              <div className="rounded-xl border border-panel-border bg-background p-5">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <svg className="h-3.5 w-3.5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                    </svg>
+                    <h3 className="text-xs font-semibold uppercase tracking-widest text-muted">
+                      Improve the Vibe
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleVibeAnalyse}
+                    disabled={vibeAnalysing}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1 text-[11px] font-medium text-white hover:bg-accent/90 disabled:opacity-50 transition-colors"
+                  >
+                    {vibeAnalysing && (
+                      <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                    )}
+                    {vibeAnalysing ? "Analysing…" : vibeAnalysed ? "Re-analyse" : "Analyse"}
+                  </button>
+                </div>
+
+                {vibeError && (
+                  <p className="mb-3 rounded-lg border border-[#f87171]/30 bg-[#f87171]/8 px-3 py-2 text-[11px] text-[#f87171]">
+                    {vibeError}
+                  </p>
+                )}
+
+                {vibeAnalysing && (
+                  <div className="space-y-2">
+                    {[0, 1, 2].map((i) => (
+                      <div key={i} className="h-20 animate-pulse rounded-lg bg-panel-border/40" />
+                    ))}
+                  </div>
+                )}
+
+                {!vibeAnalysing && vibeAnalysed && vibeImprovements.length === 0 && (
+                  <p className="text-xs text-muted leading-relaxed">
+                    No issues found — your prompts in this chat look solid.
+                  </p>
+                )}
+
+                {!vibeAnalysing && vibeImprovements.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-[11px] text-muted">
+                      <span className="font-semibold text-foreground">{vibeImprovements.length}</span> prompt improvement{vibeImprovements.length === 1 ? "" : "s"} found
+                    </p>
+                    {vibeImprovements.map((item) => (
+                      <VibeImprovementCard key={item.index} item={item} />
+                    ))}
+                  </div>
+                )}
+
+                {!vibeAnalysing && !vibeAnalysed && (
+                  <p className="text-xs text-muted leading-relaxed">
+                    Analyse your prompts in this chat for up to 10 concrete improvements.
+                  </p>
                 )}
               </div>
             )}
