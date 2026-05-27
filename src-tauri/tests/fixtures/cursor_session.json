@@ -1,0 +1,8 @@
+{
+  "composerId": "test-session-001",
+  "title": "Fix authentication bug",
+  "messages": [
+    {"role": "user", "content": "Why is my JWT token expiring immediately?", "timestamp": "2026-05-27T10:00:00Z"},
+    {"role": "assistant", "content": "The issue is likely in your token expiry config.", "timestamp": "2026-05-27T10:00:30Z"}
+  ]
+}
