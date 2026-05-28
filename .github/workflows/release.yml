@@ -59,9 +59,9 @@ jobs:
 
             ## Install
 
-            1. Download the macOS DMG.
+            1. Download `Vibe.Score_*_universal.dmg` for macOS.
             2. Open the DMG and drag **Vibe Score** into Applications.
-            3. If macOS says the app is "damaged", open Terminal and run:
+            3. Open Terminal and run these commands to clear quarantine and locally sign the app:
                ```
                xattr -cr /Applications/Vibe\ Score.app
                codesign --force --deep --sign - /Applications/Vibe\ Score.app
