@@ -1,3 +1,4 @@
+pub mod gap_analysis;
 pub mod scanner;
 pub mod scorer;
 pub mod tech_stack;

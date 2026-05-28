@@ -2213,6 +2213,7 @@ pub async fn analyze_chat_vibe(
             },
         ],
         None,
+        None,
     )
     .await?;
 

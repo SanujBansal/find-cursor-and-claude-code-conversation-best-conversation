@@ -129,6 +129,7 @@ async fn score_one(
             content: prompt_out.prompt,
         }],
         Some(response_format),
+        Some(0.0),
     )
     .await?;
 

@@ -11,6 +11,7 @@ pub async fn chat_completion(
     model: &str,
     messages: Vec<ChatMessage<'_>>,
     response_format: Option<serde_json::Value>,
+    temperature: Option<f32>,
 ) -> Result<String, String> {
     let mut body = serde_json::json!({
         "model": model,
@@ -21,6 +22,10 @@ pub async fn chat_completion(
             })
         }).collect::<Vec<_>>(),
     });
+
+    if let Some(temp) = temperature {
+        body["temperature"] = serde_json::json!(temp);
+    }
 
     if let Some(format) = response_format {
         body["response_format"] = format;

@@ -37,6 +37,7 @@ pub async fn chat_completion(
     config: &LlmConfig,
     messages: Vec<ChatMessage<'_>>,
     response_format: Option<serde_json::Value>,
+    temperature: Option<f32>,
 ) -> Result<String, String> {
     match config {
         LlmConfig::OpenAi(openai_config) => {
@@ -45,6 +46,7 @@ pub async fn chat_completion(
                 &openai_config.model,
                 messages,
                 response_format,
+                temperature,
             )
             .await
         }
@@ -54,6 +56,7 @@ pub async fn chat_completion(
                 &azure_config.chat_deployment,
                 messages,
                 response_format,
+                temperature,
             )
             .await
         }

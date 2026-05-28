@@ -6,9 +6,12 @@ use crate::{
     llm::{self, LlmConfig},
 };
 
-use super::scanner::{ProjectRulesReport, RuleFile};
+use super::{
+    gap_analysis::{analyze_gaps, format_for_prompt},
+    scanner::{ProjectRulesReport, RuleFile},
+};
 
-pub const PROJECT_RULES_RUBRIC_VERSION: &str = "v1";
+pub const PROJECT_RULES_RUBRIC_VERSION: &str = "v1.1";
 
 /// Maximum bytes from each rule file we splice into the prompt. Keeps
 /// prompts bounded even when the scanner picked up large markdown docs.
@@ -101,6 +104,7 @@ pub async fn score_project_rules_with_llm(
             content: prompt,
         }],
         Some(response_format),
+        Some(0.0),
     )
     .await?;
 
@@ -158,6 +162,7 @@ pub fn compute_overall(coverage: f64, stack: f64, specificity: f64, actionabilit
 }
 
 fn build_prompt(report: &ProjectRulesReport) -> String {
+    let gap_check = format_for_prompt(&analyze_gaps(report));
     let mut bytes_budget = PROMPT_TOTAL_BUDGET;
 
     let file_blocks: Vec<String> = report
@@ -185,6 +190,7 @@ fn build_prompt(report: &ProjectRulesReport) -> String {
          ## Rubric (score each 0-5)\n\
          {RUBRIC}\n\n\
          ## Detected tech stack\n```json\n{stack}\n```\n\n\
+         ## Automated pre-check (deterministic — use to calibrate scores)\n{gap_check}\n\n\
          ## Files present\n{files}\n\n\
          ## Rule file contents\n{contents}\n\n\
          ## Output requirements\n\
@@ -200,6 +206,7 @@ fn build_prompt(report: &ProjectRulesReport) -> String {
          - If suggestions would be empty, return an array with one entry explaining why.\n",
         RUBRIC = RUBRIC_DESCRIPTION,
         stack = stack,
+        gap_check = gap_check,
         files = file_inventory.join("\n"),
         contents = file_blocks.join("\n\n"),
     )

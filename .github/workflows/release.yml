@@ -7,20 +7,9 @@ on:
 
 jobs:
   build-macos:
+    runs-on: macos-latest
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Native ARM build — fastest for Apple Silicon
-          - target: aarch64-apple-darwin
-            runner: macos-14
-          # Native Intel build — fastest for x86_64
-          - target: x86_64-apple-darwin
-            runner: macos-13
-
-    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: Checkout
@@ -35,20 +24,18 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
-      - name: Rust cache
+      - name: Install Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
-          key: ${{ matrix.target }}
 
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build app
+      - name: Build and release (universal macOS binary)
         uses: tauri-apps/tauri-action@v0
-        id: tauri
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # ── Code signing (optional) ────────────────────────────────────────
@@ -72,7 +59,7 @@ jobs:
 
             ## Install
 
-            1. Download `Vibe.Score_*_aarch64.dmg` (Apple Silicon) or `Vibe.Score_*_x64.dmg` (Intel).
+            1. Download the macOS DMG.
             2. Open the DMG and drag **Vibe Score** into Applications.
             3. If macOS says the app is "damaged", open Terminal and run:
                ```
@@ -82,10 +69,4 @@ jobs:
                Then launch the app normally.
           releaseDraft: false
           prerelease: false
-          args: --target ${{ matrix.target }}
-
-      - name: Ad-hoc sign the app bundle
-        run: |
-          APP=$(find src-tauri/target/${{ matrix.target }}/release/bundle/macos -name "*.app" | head -1)
-          echo "Signing: $APP"
-          codesign --force --deep --sign - "$APP"
+          args: --target universal-apple-darwin

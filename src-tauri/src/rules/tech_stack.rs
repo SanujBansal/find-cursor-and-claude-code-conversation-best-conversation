@@ -123,6 +123,12 @@ fn detect_node(root: &Path, stack: &mut TechStack, signals: &mut BTreeSet<String
     if has_dep(&json, "tailwindcss") || has_dep(&json, "@tailwindcss/postcss") {
         stack.add_framework("Tailwind CSS");
     }
+    if has_dep(&json, "antd") {
+        stack.add_framework("Ant Design");
+    }
+    if has_dep(&json, "@heroui/react") || has_dep(&json, "@nextui-org/react") {
+        stack.add_framework("Hero UI");
+    }
     if has_dep(&json, "@tauri-apps/api") || has_dep(&json, "@tauri-apps/cli") {
         stack.add_framework("Tauri");
     }
