@@ -1,6 +1,6 @@
 # Vibe Score
 
-**Find your best AI coding sessions — objectively.**
+**Find your best AI coding sessions | Find best cursor chat transcription } Find best claude code session - objectively.**
 
 Vibe Score is a macOS desktop app that imports your AI coding transcripts (Cursor, Claude Code, Claude web), scores every conversation with an LLM rubric, and surfaces the sessions that show your strongest engineering instincts.
 
