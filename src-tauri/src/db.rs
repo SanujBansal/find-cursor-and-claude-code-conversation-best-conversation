@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -80,11 +80,11 @@ fn run_migrations(connection: &Connection) -> Result<(), String> {
         )
         .map_err(|error| error.to_string())?;
 
-    for migration in collect_migrations()? {
+    for migration in MIGRATIONS {
         let already_applied: bool = connection
             .query_row(
                 "SELECT 1 FROM schema_migrations WHERE version = ?1",
-                [migration.version.as_str()],
+                [migration.version],
                 |_| Ok(true),
             )
             .optional()
@@ -96,14 +96,14 @@ fn run_migrations(connection: &Connection) -> Result<(), String> {
         }
 
         connection
-            .execute_batch(&migration.sql)
+            .execute_batch(migration.sql)
             .map_err(|error| format!("Migration {} failed: {error}", migration.version))?;
 
         let applied_at = chrono::Utc::now().to_rfc3339();
         connection
             .execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
-                (&migration.version, &applied_at),
+                (migration.version, &applied_at),
             )
             .map_err(|error| error.to_string())?;
     }
@@ -112,34 +112,29 @@ fn run_migrations(connection: &Connection) -> Result<(), String> {
 }
 
 struct Migration {
-    version: String,
-    sql: String,
+    version: &'static str,
+    sql: &'static str,
 }
 
-fn collect_migrations() -> Result<Vec<Migration>, String> {
-    let migrations_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
-    let mut entries: Vec<PathBuf> = fs::read_dir(&migrations_dir)
-        .map_err(|error| format!("Failed to read migrations directory: {error}"))?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.extension().is_some_and(|ext| ext == "sql"))
-        .collect();
-
-    entries.sort();
-
-    entries
-        .into_iter()
-        .map(|path| {
-            let file_name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| "Invalid migration filename".to_string())?
-                .to_string();
-            let sql = fs::read_to_string(&path)
-                .map_err(|error| format!("Failed to read migration {file_name}: {error}"))?;
-            Ok(Migration {
-                version: file_name,
-                sql,
-            })
-        })
-        .collect()
-}
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: "001_initial_schema.sql",
+        sql: include_str!("../migrations/001_initial_schema.sql"),
+    },
+    Migration {
+        version: "002_add_cache_key.sql",
+        sql: include_str!("../migrations/002_add_cache_key.sql"),
+    },
+    Migration {
+        version: "003_drop_search_and_suggestions.sql",
+        sql: include_str!("../migrations/003_drop_search_and_suggestions.sql"),
+    },
+    Migration {
+        version: "004_project_rule_scores.sql",
+        sql: include_str!("../migrations/004_project_rule_scores.sql"),
+    },
+    Migration {
+        version: "005_rubric_v3_dimensions.sql",
+        sql: include_str!("../migrations/005_rubric_v3_dimensions.sql"),
+    },
+];
